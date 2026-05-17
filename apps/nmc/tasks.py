@@ -1,0 +1,230 @@
+import logging
+from datetime import datetime
+from typing import Any, Dict, Optional
+
+from celery import shared_task
+from django.db import transaction
+
+from apps.nmc.models import WeatherWarning
+
+# 这里改成你实际写接口调用方法的位置
+# 例如：from nmc.services.music import query_warning_records
+from apps.nmc.music import query_warning_records
+
+
+logger = logging.getLogger(__name__)
+
+
+def clean_str(value: Any) -> Optional[str]:
+    """
+    清洗字符串：
+    - None -> None
+    - "" -> None
+    - "null" -> None
+    - 其他 -> 去除前后空格后的字符串
+    """
+    if value is None:
+        return None
+
+    value = str(value).strip()
+
+    if value == "":
+        return None
+
+    if value.lower() == "null":
+        return None
+
+    return value
+
+
+def parse_datetime(value: Any) -> Optional[datetime]:
+    """
+    解析接口时间字段。
+    支持：
+    - 2026-05-01 18:07:24
+    - 2026/05/01 18:07:24
+    - 20260501180724
+    """
+    value = clean_str(value)
+
+    if not value:
+        return None
+
+    formats = [
+        "%Y-%m-%d %H:%M:%S",
+        "%Y/%m/%d %H:%M:%S",
+        "%Y%m%d%H%M%S",
+    ]
+
+    for fmt in formats:
+        try:
+            return datetime.strptime(value, fmt)
+        except ValueError:
+            continue
+
+    logger.warning("时间格式无法解析: %s", value)
+    return None
+
+
+def build_warning_data(item: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """
+    将接口字段清洗成 WeatherWarning 模型字段。
+    """
+    warning_id = clean_str(item.get("ID"))
+
+    if not warning_id:
+        logger.warning("跳过无 ID 的预警数据: %s", item)
+        return None
+
+    signal_type = clean_str(item.get("SIGNAL_TYPE"))
+
+    return {
+        "warning_id": warning_id,
+        "publish_id": clean_str(item.get("PUBLISH_ID")),
+        "pid": clean_str(item.get("PID")),
+        "warn_code": clean_str(item.get("WARN_CODE")),
+
+        "iymdhm": parse_datetime(item.get("IYMDHM")),
+        "rymdhm": parse_datetime(item.get("RYMDHM")),
+
+        "warn_time": parse_datetime(item.get("WARN_TIME")),
+        "warn_period": clean_str(item.get("WARN_PERIOD")),
+
+        "warn_type": clean_str(item.get("WARN_TYPE")),
+        "warn_level": clean_str(item.get("WARN_LEVEL")),
+
+        "signal_type": signal_type,
+        "is_active": False if signal_type == "2" else True,
+
+        "warn_content": clean_str(item.get("WARN_CONTENT")),
+        "warn_area": clean_str(item.get("WARN_AREA")),
+        "warn_measure": clean_str(item.get("WARN_MEASURE")),
+
+        "area_code": clean_str(item.get("AREA_CODE")),
+        "publish_unit": clean_str(item.get("PUBLISH_UNIT")),
+        "status": clean_str(item.get("STATUS")),
+
+        "make_time": parse_datetime(item.get("MAKE_TIME")),
+
+        "raw_json": item,
+    }
+
+
+def save_one_warning(item: Dict[str, Any]) -> str:
+    """
+    保存单条预警。
+    根据 warning_id 去重。
+
+    返回：
+    - created
+    - updated
+    - skipped
+    """
+    data = build_warning_data(item)
+
+    if not data:
+        return "skipped"
+
+    warning_id = data.pop("warning_id")
+
+    obj, created = WeatherWarning.objects.update_or_create(
+        warning_id=warning_id,
+        defaults=data,
+    )
+
+    # 如果当前记录是解除信号，根据信号 PID 把原始预警也置为已解除。
+    #
+    # 例如：
+    # 当前解除记录：
+    # ID = 59127
+    # PID = 59114
+    # SIGNAL_TYPE = 2
+    #
+    # 那么需要把 warning_id = 59114 的原始预警设置为 is_active=False
+    if obj.signal_type == "2" and obj.pid:
+        WeatherWarning.objects.filter(
+            warning_id=obj.pid
+        ).update(
+            is_active=False
+        )
+
+        # 同时，如果有变更记录也使用同一个 PID，也可以一起置为解除
+        WeatherWarning.objects.filter(
+            pid=obj.pid
+        ).update(
+            is_active=False
+        )
+
+    return "created" if created else "updated"
+
+
+@shared_task(name="nmc.tasks.sync_weather_warning_task")
+def sync_weather_warning_task():
+    """
+    定时同步天气预警数据。
+
+    逻辑：
+    1. 调用预警接口
+    2. 清洗字段
+    3. 根据 ID 去重保存
+    4. 如果 SIGNAL_TYPE=2，解除原始预警
+    """
+    logger.info("开始同步天气预警数据")
+
+    try:
+        records = query_warning_records()
+    except Exception as e:
+        logger.exception("调用天气预警接口失败: %s", e)
+        return {
+            "success": False,
+            "message": f"调用天气预警接口失败: {e}",
+        }
+
+    if not records:
+        logger.info("本次没有获取到天气预警数据")
+        return {
+            "success": True,
+            "total": 0,
+            "created": 0,
+            "updated": 0,
+            "skipped": 0,
+        }
+
+    created_count = 0
+    updated_count = 0
+    skipped_count = 0
+    error_count = 0
+
+    with transaction.atomic():
+        for item in records:
+            try:
+                result = save_one_warning(item)
+
+                if result == "created":
+                    created_count += 1
+                elif result == "updated":
+                    updated_count += 1
+                else:
+                    skipped_count += 1
+
+            except Exception as e:
+                error_count += 1
+                logger.exception("保存单条预警失败: %s, item=%s", e, item)
+
+    logger.info(
+        "天气预警同步完成 total=%s created=%s updated=%s skipped=%s error=%s",
+        len(records),
+        created_count,
+        updated_count,
+        skipped_count,
+        error_count,
+    )
+
+    return {
+        "success": True,
+        "total": len(records),
+        "created": created_count,
+        "updated": updated_count,
+        "skipped": skipped_count,
+        "error": error_count,
+    }

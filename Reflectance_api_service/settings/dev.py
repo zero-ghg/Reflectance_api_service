@@ -53,9 +53,10 @@ INSTALLED_APPS = [
     'corsheaders',
     'rest_framework_simplejwt',
     'users.apps.UserConfig',
-    'reflectance.apps.ReflectanceConfig',
-    'lightning_warning.apps.WarningConfig',
-
+    'nmc.apps.NmcConfig',
+    "django_celery_beat",
+    # 'reflectance.apps.ReflectanceConfig',
+    # 'lightning_warning.apps.WarningConfig',
 ]
 
 MIDDLEWARE = [
@@ -94,15 +95,13 @@ WSGI_APPLICATION = 'Reflectance_api_service.wsgi.application'
 
 DATABASES = {
     'default': {
-        'ENGINE': 'django.db.backends.postgresql',
+        'ENGINE': 'django.db.backends.mysql',
         'NAME': 'leidian',       # 刚才创建的数据库名
-        'USER': 'postgres',      # PostgreSQL 用户名
-        'PASSWORD': '123456',  # 安装时设置的密码
+        'USER': 'root',      # PostgreSQL 用户名
+        'PASSWORD': '20001022',  # 安装时设置的密码
         'HOST': 'localhost',
-        'PORT': '5432',          # PostgreSQL 默认端口
-        'OPTIONS': {
-            'options': '-c search_path=atmo,public'  # 指定架构
-        }
+        'PORT': '3306'         # PostgreSQL 默认端口
+
     }
 }
 
@@ -166,6 +165,23 @@ SIMPLE_JWT = {
 }
 
 # ... existing code ...
+# Celery 配置
+CELERY_BROKER_URL = "redis://127.0.0.1:6379/0"
+CELERY_RESULT_BACKEND = "redis://127.0.0.1:6379/1"
+
+CELERY_TIMEZONE = "Asia/Shanghai"
+CELERY_ENABLE_UTC = False
+
+CELERY_TASK_TRACK_STARTED = True
+CELERY_TASK_TIME_LIMIT = 60 * 5
+
+# 定时任务配置：每 5 分钟执行一次
+CELERY_BEAT_SCHEDULE = {
+    "sync-weather-warning-every-5-minutes": {
+        "task": "nmc.tasks.sync_weather_warning_task",
+        "schedule": 300.0,
+    },
+}
 
 STATIC_URL = '/static/'
 
