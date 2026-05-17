@@ -1,6 +1,6 @@
 import logging
 from datetime import datetime
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from celery import shared_task
 from django.db import transaction
@@ -66,10 +66,60 @@ def parse_datetime(value: Any) -> Optional[datetime]:
     return None
 
 
+# 新增: 统一整理接口返回的预警记录
+def normalize_records(raw_records: Any) -> List[Dict[str, Any]]:
+    """
+    将接口返回结果统一整理成预警记录列表。
+
+    兼容以下几种返回：
+    - [{...}, {...}]
+    - {"DS": [{...}, {...}]}
+    - {"data": {"DS": [{...}, {...}]}}
+    - {"result": {"DS": [{...}, {...}]}}
+    """
+    if raw_records is None:
+        return []
+
+    # 如果接口方法返回的是 JSON 字符串，先解析成 dict
+    if isinstance(raw_records, str):
+        import json
+        try:
+            raw_records = json.loads(raw_records)
+        except json.JSONDecodeError:
+            logger.warning("接口返回字符串不是合法 JSON: %s", raw_records[:500])
+            return []
+
+    if isinstance(raw_records, list):
+        return [item for item in raw_records if isinstance(item, dict)]
+
+    if isinstance(raw_records, dict):
+        ds = raw_records.get("DS")
+        if isinstance(ds, list):
+            return [item for item in ds if isinstance(item, dict)]
+
+        data = raw_records.get("data")
+        if isinstance(data, dict):
+            ds = data.get("DS")
+            if isinstance(ds, list):
+                return [item for item in ds if isinstance(item, dict)]
+
+        result = raw_records.get("result")
+        if isinstance(result, dict):
+            ds = result.get("DS")
+            if isinstance(ds, list):
+                return [item for item in ds if isinstance(item, dict)]
+
+    logger.warning("接口返回结构不是预期的记录列表: type=%s, value=%s", type(raw_records), raw_records)
+    return []
+
+
 def build_warning_data(item: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     """
     将接口字段清洗成 WeatherWarning 模型字段。
     """
+    if not isinstance(item, dict):
+        logger.warning("跳过非字典预警数据: %s", item)
+        return None
     warning_id = clean_str(item.get("ID"))
 
     if not warning_id:
@@ -172,13 +222,24 @@ def sync_weather_warning_task():
     logger.info("开始同步天气预警数据")
 
     try:
-        records = query_warning_records()
+        raw_records = query_warning_records()
+        records = normalize_records(raw_records)
+        logger.info(
+            "预警接口返回类型 raw_type=%s, records_type=%s, records_count=%s",
+            type(raw_records).__name__,
+            type(records).__name__,
+            len(records) if isinstance(records, list) else "not-list",
+        )
     except Exception as e:
         logger.exception("调用天气预警接口失败: %s", e)
         return {
             "success": False,
             "message": f"调用天气预警接口失败: {e}",
         }
+
+    # 双保险：如果 records 仍然不是 list，说明接口返回结构未被正确展开，这里再展开一次
+    if not isinstance(records, list):
+        records = normalize_records(records)
 
     if not records:
         logger.info("本次没有获取到天气预警数据")
@@ -195,8 +256,16 @@ def sync_weather_warning_task():
     skipped_count = 0
     error_count = 0
 
+    # 再次防止 dict 被直接遍历成 returnCode、DS 等 key
+    if isinstance(records, dict):
+        records = normalize_records(records)
+
     with transaction.atomic():
         for item in records:
+            if not isinstance(item, dict):
+                skipped_count += 1
+                logger.warning("跳过非字典预警数据: %s", item)
+                continue
             try:
                 result = save_one_warning(item)
 
