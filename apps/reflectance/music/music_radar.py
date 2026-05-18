@@ -7,7 +7,7 @@ from pathlib import Path
 import re
 
 # 配置 MUSIC SDK 的源码路径，将其添加到 Python 模块搜索路径中
-_SRC = Path(__file__).resolve().parent.parent.parent / "Reflectance_api_service" / "src"
+_SRC = Path(__file__).resolve().parents[3] / "Reflectance_api_service" / "src"
 if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
 
@@ -470,20 +470,15 @@ def radar_bin_path(request=None):
             f = cinrad.io.MocMosaic(str(file_path))
 
     Args:
-        request: Django REST framework 的请求对象，可选
-                从中提取 time 参数用于指定查询时间
+        request: DRF 请求对象，从 request.data 读取 time（可选）
 
     Yields:
         tuple: (cache_file, selected_time)
             - cache_file: 缓存的 bin 文件路径 (Path 对象)
             - selected_time: 选中文件的时间字符串 (YYYY-MM-DD HH:MM:SS)
     """
-    # 从请求中提取时间参数
-    time_param = None
-    if request:
-        time_param = request.query_params.get("time")
-        if not time_param and hasattr(request, "data"):
-            time_param = request.data.get("time")
+    # 从 GET Query 读取 time
+    time_param = request.query_params.get("time") if request else None
 
     # 查询雷达文件列表
     file_infos = _query_radar_files(time_param)

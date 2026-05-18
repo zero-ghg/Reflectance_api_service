@@ -14,10 +14,21 @@ import sys
 from datetime import timedelta
 from pathlib import Path
 
+import pymysql
+
+pymysql.install_as_MySQLdb()
+
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
-# apps 目录添加到 项目搜索包目录列表 即： sys.path 中
-sys.path.insert(0, os.path.join(BASE_DIR, 'apps'))
+PROJECT_ROOT = BASE_DIR.parent
+# apps 与项目根目录加入路径（Celery 子进程不会走 manage.py，须在此配置）
+_APPS_DIR = PROJECT_ROOT / "apps"
+if _APPS_DIR.is_dir():
+    sys.path.insert(0, str(_APPS_DIR))
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+from lightning_warning.celery_beat.beat_schedule import CELERY_BEAT_SCHEDULE
 # MUSIC Python SDK（cma.music）
 
 _SRC = BASE_DIR / "src"
@@ -52,9 +63,11 @@ INSTALLED_APPS = [
     'rest_framework',
     'corsheaders',
     'rest_framework_simplejwt',
+    'django_celery_beat',
     'users.apps.UserConfig',
     'reflectance.apps.ReflectanceConfig',
     'lightning_warning.apps.WarningConfig',
+    'report.apps.ReportConfig'
 
 ]
 
@@ -103,7 +116,16 @@ DATABASES = {
         'OPTIONS': {
             'options': '-c search_path=atmo,public'  # 指定架构
         }
-    }
+    },
+    # 雷电预警结果落库（定时任务 / 接口兜底计算）
+    'mysql': {
+        'ENGINE': 'django.db.backends.mysql',
+        'NAME':"leidian_warning",
+        'USER':"root",
+        'PASSWORD': '123456',
+        'HOST':"localhost",
+        'PORT': "3306",
+    },
 }
 
 # Password validation
@@ -164,6 +186,17 @@ SIMPLE_JWT = {
     'REFRESH_TOKEN_LIFETIME': timedelta(days=7),  # Refresh Token的有效期
 
 }
+
+CELERY_BROKER_URL = os.getenv("CELERY_BROKER_URL", "redis://127.0.0.1:6379/0")
+CELERY_RESULT_BACKEND = os.getenv("CELERY_RESULT_BACKEND", CELERY_BROKER_URL)
+CELERY_ACCEPT_CONTENT = ["json"]
+CELERY_TASK_SERIALIZER = "json"
+CELERY_RESULT_SERIALIZER = "json"
+CELERY_TIMEZONE = "Asia/Shanghai"
+CELERY_ENABLE_UTC = False
+
+# runserver 时自动启动 Celery Worker + Beat（设环境变量 CELERY_AUTO_START=0 可关闭）
+CELERY_AUTO_START = os.getenv("CELERY_AUTO_START", "1")
 
 # ... existing code ...
 

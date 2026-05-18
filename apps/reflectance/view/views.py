@@ -13,10 +13,10 @@ from rest_framework.exceptions import APIException, NotFound
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from reflectance.music_radar import radar_bin_path
+from reflectance.music.music_radar import radar_bin_path
 
 logger = logging.getLogger(__name__)
-REFLECTANCE_RENDER_DPI = 450
+REFLECTANCE_RENDER_DPI = 600
 
 # RADAR_BIN_PATH = Path(__file__).resolve().parent / "Z_RADA_C_BABJ_20260506000014_P_DOR_ACHN_CREF_20260505_235400.bin"
 
@@ -34,7 +34,10 @@ def _data_for_plot(data):
 # 反射率图片生成接口
 class ReflectanceView(APIView):
     def get(self, request):
-        # file_path = RADAR_BIN_PATH
+        time_str = request.query_params.get("time")
+        if not time_str:
+            return Response({"code": 400, "msg": "缺少参数 time"})
+
         try:
             with radar_bin_path(request) as (file_path, selected_time):
                 img_dir = Path(settings.MEDIA_ROOT) / "reflectance"

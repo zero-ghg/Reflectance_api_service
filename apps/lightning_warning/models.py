@@ -24,6 +24,7 @@ class TAtmoConfigTj(models.Model):
         db_table = 't_atmo_config_tj'
         verbose_name = '设备配置'
         verbose_name_plural = verbose_name
+        managed = False
 
 # 监测数据表
 class TAtmoData(models.Model):
@@ -38,6 +39,23 @@ class TAtmoData(models.Model):
         db_table = 't_atmo_data'
         verbose_name = '监测数据'
         verbose_name_plural = verbose_name
+        managed = False
 
 
+class LightningWarningResult(models.Model):
+
+    start_time = models.DateTimeField(verbose_name="统计开始时间")
+    end_time = models.DateTimeField(verbose_name="统计结束时间")
+    response_time = models.DateTimeField(verbose_name="结果时次", db_index=True)
+    device_id = models.IntegerField(verbose_name="设备ID")
+    warning_type = models.IntegerField(verbose_name="预警等级")
+    max_val = models.IntegerField(verbose_name="最大值")
+    min_val = models.IntegerField(verbose_name="最小值")
+    avg_val = models.IntegerField(verbose_name="平均值")
+    created_at = models.DateTimeField(auto_now_add=True, verbose_name="入库时间")
+
+    class Meta:
+        db_table = "lightning_warning_result"
+        verbose_name = "雷电预警结果"
+        verbose_name_plural = verbose_name
 
