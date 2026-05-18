@@ -16,6 +16,9 @@ from pathlib import Path
 
 from celery.schedules import crontab
 
+import pymysql
+pymysql.install_as_MySQLdb()
+
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
 # apps 目录添加到 项目搜索包目录列表 即： sys.path 中
@@ -100,9 +103,9 @@ WSGI_APPLICATION = 'Reflectance_api_service.wsgi.application'
 DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.mysql',
-        'NAME': 'leidian',       # 刚才创建的数据库名
+        'NAME': 'leidian_warning',       # 刚才创建的数据库名
         'USER': 'root',      # PostgreSQL 用户名
-        'PASSWORD': '20001022',  # 安装时设置的密码
+        'PASSWORD': '123456',  # 安装时设置的密码
         'HOST': 'localhost',
         'PORT': '3306'         # PostgreSQL 默认端口
 
@@ -138,7 +141,7 @@ USE_I18N = True
 
 USE_L10N = False
 
-USE_TZ = True
+USE_TZ = False
 
 CORS_ORIGIN_ALLOW_ALL = True
 # Static files (CSS, JavaScript, Images)

@@ -23,8 +23,6 @@ _stopping = False  # 标记是否正在停止进程中
 # 不需要自动启动 Celery 的命令列表
 _SKIP_COMMANDS = frozenset(
     {
-        "migrate",  # 数据库迁移
-        "makemigrations",  # 生成迁移文件
         "shell",  # Django shell
         "test",  # 运行测试
         "check",  # 检查项目配置

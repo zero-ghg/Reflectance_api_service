@@ -9,7 +9,7 @@ from lightning_warning.models import LightningWarningResult
 logger = logging.getLogger(__name__)
 
 LOOKBACK_MINUTES = 10  # 数据回溯时间窗口（分钟），即计算最近10分钟的数据
-MYSQL_DB = "mysql"  # MySQL 数据库别名（对应 settings.DATABASES 中的 'mysql'）
+MYSQL_DB = "default"  # MySQL 数据库别名（对应 settings.DATABASES 中的 'mysql'）
 
 
 def _save_to_mysql(calculator, start_dt, end_dt, warning_list: List[Dict[str, Any]]) -> int:
@@ -55,12 +55,12 @@ def query_by_time(calculator, query_dt) -> Tuple[List[Dict[str, Any]], str]:
 
     参数:
         calculator: Detail_Warning 实例
-        query_dt: 查询的时间点
+        query_dt: 查询的时间点（naive datetime）
 
     返回:
         (预警数据列表, 响应时间字符串)，如果没有数据则返回 ([], "")
     """
-    end_dt = query_dt.astimezone(calculator._beijing_tz())  # 转换为北京时区
+    end_dt = query_dt  # 已经是 naive datetime，直接使用
     # 从 MySQL 查询指定 response_time 的预警数据
     qs = (
         LightningWarningResult.objects.using(MYSQL_DB)
@@ -79,12 +79,12 @@ def compute_and_save(calculator, query_dt) -> Tuple[List[Dict[str, Any]], str]:
 
     参数:
         calculator: Detail_Warning 实例，提供计算方法
-        query_dt: 查询的时间点（作为计算窗口的结束时间）
+        query_dt: 查询的时间点（naive datetime）
 
     返回:
         (预警数据列表, 响应时间字符串)
     """
-    end_dt = query_dt.astimezone(calculator._beijing_tz())  # 转换为北京时区作为结束时间
+    end_dt = query_dt  # 已经是 naive datetime
     start_dt = end_dt - timedelta(minutes=LOOKBACK_MINUTES)  # 计算开始时间（回溯10分钟）
 
     # 调用 Detail_Warning 的方法构建预警列表
@@ -114,9 +114,14 @@ def run_scheduled_job(calculator) -> None:
     参数:
         calculator: Detail_Warning 实例
     """
-    now_dt = timezone.now().astimezone(calculator._beijing_tz())  # 获取当前北京时间
+    now_dt = timezone.now()  # 获取当前时间
+    # 移除时区信息，转换为 naive datetime
+    now_dt = now_dt.replace(tzinfo=None)
+
     end_dt = now_dt  # 结束时间为当前时间
     start_dt = end_dt - timedelta(minutes=LOOKBACK_MINUTES)  # 开始时间（回溯10分钟）
+
+    # ... existing code ...
 
     # 打印计算窗口信息
     print(
