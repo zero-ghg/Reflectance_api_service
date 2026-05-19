@@ -76,8 +76,10 @@ def _popen(cmd: List[str], root: Path, env: dict) -> subprocess.Popen:
 def _describe_beat_schedule(schedule) -> str:
     """将 Celery schedule 转为可读的中文描述。"""
     minute = getattr(schedule, "minute", None)
-    if minute is not None and str(minute) in ("*/6", "{0,6,12,18,24,30,36,42,48,54}"):
-        return "每 6 分钟（0、6、12… 分）"
+    if minute is not None and str(minute) in ("*/6", "1-59/6", "{0,6,12,18,24,30,36,42,48,54}"):
+        return "每 6 分钟"
+    if minute is not None and str(minute) == "1":
+        return "每小时第 1 分钟"
     if isinstance(schedule, (int, float)):
         minutes = int(schedule) // 60
         return f"每 {minutes} 分钟" if minutes > 0 else f"每 {int(schedule)} 秒"
@@ -93,6 +95,14 @@ _BEAT_TASK_DISPLAY = {
     "reflectance-every-6-minutes": {
         "label": "反射率",
         "storage": "apps/img/radar_bin (bin) + apps/img/reflectance (PNG)",
+    },
+    "precipitation-1h-every-6-minutes": {
+        "label": "1小时降水概率",
+        "storage": "apps/img/precipitation_bin/one_hour (bin) + apps/img/precipitation/1h (PNG)",
+    },
+    "precipitation-3h-hourly": {
+        "label": "3小时降水概率",
+        "storage": "apps/img/precipitation_bin/three_hour (bin) + apps/img/precipitation/3h (PNG)",
     },
 }
 
