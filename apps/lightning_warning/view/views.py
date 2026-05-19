@@ -376,6 +376,96 @@ class Detail_Warning(APIView):
             logger.exception(f"PostgreSQL 查询失败: {e}")
             return []
 
+    @staticmethod
+    def _normalize_pg_datetime(value) -> Optional[datetime]:
+        if value is None:
+            return None
+        if isinstance(value, datetime) and value.tzinfo is not None:
+            return value.replace(tzinfo=None)
+        return value
+
+    def _pg_has_data_at_end_time(self, end_dt) -> bool:
+        """按前端传入的 end_time 在 PostgreSQL 中做指定时刻查询。"""
+        try:
+            conn = psycopg2.connect(**PG_CONFIG)
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT 1 FROM t_atmo_data WHERE time = %s LIMIT 1",
+                (end_dt,),
+            )
+            exists = cursor.fetchone() is not None
+            cursor.close()
+            conn.close()
+            return exists
+        except Exception as e:
+            logger.exception(f"PostgreSQL 指定时次查询失败: {e}")
+            return False
+
+    def _find_nearest_pg_end_time_before(self, query_dt) -> Optional[datetime]:
+        """查询严格早于 query_dt 的最近一条监测数据时间。"""
+        try:
+            conn = psycopg2.connect(**PG_CONFIG)
+            cursor = conn.cursor(cursor_factory=RealDictCursor)
+            cursor.execute(
+                "SELECT MAX(time) AS latest_time FROM t_atmo_data WHERE time < %s",
+                (query_dt,),
+            )
+            row = cursor.fetchone()
+            cursor.close()
+            conn.close()
+            return self._normalize_pg_datetime(row.get("latest_time") if row else None)
+        except Exception as e:
+            logger.exception(f"PostgreSQL 查询最近时次失败: {e}")
+            return None
+
+    def resolve_end_time(self, query_dt) -> datetime:
+        """
+        解析计算用的 end_time：前端传什么优先用什么；
+        仅当 PG 在该时刻无数据时，向上（向过去）取最近时次。
+        确定 end_time 后，由 compute_and_save 再向前回溯 10 分钟计算。
+        """
+        if self._pg_has_data_at_end_time(query_dt):
+            return query_dt
+
+        nearest = self._find_nearest_pg_end_time_before(query_dt)
+        if nearest is None:
+            logger.warning(f"请求时次 {query_dt} 之前无 PostgreSQL 监测数据")
+            return query_dt
+
+        logger.info(
+            f"请求时次 {query_dt} 在 PostgreSQL 无数据，"
+            f"回退至最近时次 {nearest}"
+        )
+        return nearest
+
+    def _fetch_device_config_map(self) -> Dict[int, Dict[str, Any]]:
+        """从 PostgreSQL 设备配置表查询 device_id -> 设备信息映射。"""
+        try:
+            conn = psycopg2.connect(**PG_CONFIG)
+            cursor = conn.cursor(cursor_factory=RealDictCursor)
+            cursor.execute(
+                "SELECT id, device_name, lng, lat FROM t_atmo_config_tj"
+            )
+            rows = cursor.fetchall()
+            cursor.close()
+            conn.close()
+            result: Dict[int, Dict[str, Any]] = {}
+            for row in rows:
+                if row.get("id") is None:
+                    continue
+                device_pk = int(row["id"])
+                lng = row.get("lng")
+                lat = row.get("lat")
+                result[device_pk] = {
+                    "device_name": row.get("device_name") or "",
+                    "lng": float(lng) if lng is not None else None,
+                    "lat": float(lat) if lat is not None else None,
+                }
+            return result
+        except Exception as e:
+            logger.exception(f"查询设备配置失败: {e}")
+            return {}
+
     def _build_warning_list(self, start_dt, end_dt, field_key: str, unit: str) -> List[Dict[str, Any]]:
         time_key = "time"  # 时间字段键名
 
@@ -385,6 +475,8 @@ class Detail_Warning(APIView):
         if not raw_rows:
             logger.warning(f"时间窗口 [{start_dt}, {end_dt}] 内无数据")
             return []
+
+        device_config_map = self._fetch_device_config_map()
 
         grouped_data: Dict[int, List[Dict[str, Any]]] = defaultdict(list)  # 创建设备数据分组字典
         device_stats: Dict[int, Dict[str, Any]] = {}
@@ -429,9 +521,13 @@ class Detail_Warning(APIView):
                 unit=unit,  # 单位
             )
             wtype = int(pred.get("warning_level", 0))  # 获取预警等级
+            cfg = device_config_map.get(device_pk, {})
             warning_list.append(  # 添加到预警列表
                 {
                     "device_id": int(device_pk),  # 设备ID
+                    "device_name": cfg.get("device_name", ""),
+                    "lng": cfg.get("lng"),
+                    "lat": cfg.get("lat"),
                     "type": wtype,  # 预警类型
                     "max_val": self._stat_int_scaled(row["max_val"], unit),  # 缩放后的最大值
                     "min_val": self._stat_int_scaled(row["min_val"], unit),  # 缩放后的最小值
@@ -442,9 +538,9 @@ class Detail_Warning(APIView):
 
     def get(self, request):
         """获取雷电预警结果"""
-        time_str = request.query_params.get("time")
+        time_str = request.query_params.get("end_time")
         if not time_str:
-            return Response({"code": 400, "msg": "缺少参数 time"})
+            return Response({"code": 400, "msg": "缺少参数end_time"})
 
         query_dt = parse_datetime(str(time_str))
         if query_dt is None:
@@ -455,9 +551,34 @@ class Detail_Warning(APIView):
         if not timezone.is_naive(query_dt):
             query_dt = query_dt.astimezone(self._beijing_tz()).replace(tzinfo=None)
 
+        # 1. 先用前端传入的 end_time 查 MySQL 缓存
         warning_list, resp_time = query_by_time(self, query_dt)
-        if not warning_list:
-            warning_list, resp_time = compute_and_save(self, query_dt)
+        if warning_list:
+            return Response(
+                {
+                    "code": 200,
+                    "msg": "获取成功",
+                    "data": {"warning": warning_list, "time": resp_time},
+                }
+            )
+
+        # 2. 在 PG 按指定 end_time 探测；无数据则向上取最近时次
+        end_dt = self.resolve_end_time(query_dt)
+
+        # 3. 回退后的时次若不同，再查一次 MySQL 缓存
+        if end_dt != query_dt:
+            warning_list, resp_time = query_by_time(self, end_dt)
+            if warning_list:
+                return Response(
+                    {
+                        "code": 200,
+                        "msg": "获取成功",
+                        "data": {"warning": warning_list, "time": resp_time},
+                    }
+                )
+
+        # 4. 确定 end_time 后，向前回溯 10 分钟从 PG 取数计算并写入 MySQL
+        warning_list, resp_time = compute_and_save(self, end_dt)
 
         return Response(
             {"code": 200,"msg": "获取成功","data": {"warning": warning_list, "time": resp_time},})

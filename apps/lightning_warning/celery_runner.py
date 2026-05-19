@@ -12,8 +12,6 @@ from typing import List, Optional
 
 from django.conf import settings
 
-from lightning_warning.celery_beat.schedule_component import LOOKBACK_MINUTES
-
 logger = logging.getLogger(__name__)
 
 _celery_procs: List[subprocess.Popen] = []  # 存储 Celery 子进程对象列表
@@ -75,40 +73,56 @@ def _popen(cmd: List[str], root: Path, env: dict) -> subprocess.Popen:
     return subprocess.Popen(cmd, **kwargs)  # 创建并返回子进程对象
 
 
+def _describe_beat_schedule(schedule) -> str:
+    """将 Celery schedule 转为可读的中文描述。"""
+    minute = getattr(schedule, "minute", None)
+    if minute is not None and str(minute) in ("*/6", "{0,6,12,18,24,30,36,42,48,54}"):
+        return "每 6 分钟（0、6、12… 分）"
+    if isinstance(schedule, (int, float)):
+        minutes = int(schedule) // 60
+        return f"每 {minutes} 分钟" if minutes > 0 else f"每 {int(schedule)} 秒"
+    return str(schedule)
+
+
+# Beat 任务展示配置：仅打印定时规则、任务名称、结果入库
+_BEAT_TASK_DISPLAY = {
+    "lightning-warning-every-6-minutes": {
+        "label": "雷电预警",
+        "storage": "MySQL lightning_warning_result",
+    },
+    "reflectance-every-6-minutes": {
+        "label": "反射率",
+        "storage": "apps/img/radar_bin (bin) + apps/img/reflectance (PNG)",
+    },
+}
+
+
 def _print_startup_info(
     worker_cmd: List[str], beat_cmd: List[str], worker_pid: int, beat_pid: int, node_name: str
 ) -> None:
-    """打印 Celery 启动信息。"""
-    broker = getattr(settings, "CELERY_BROKER_URL", "")  # 获取 Broker URL
-    schedule = getattr(settings, "CELERY_BEAT_SCHEDULE", {})  # 获取定时任务配置
-    task_name = ""  # 任务名称
-    cron_desc = "每 6 分钟（0、6、12… 分）"  # 默认描述
-    for name, item in schedule.items():  # 遍历定时任务配置
-        task_name = item.get("task", "")  # 获取任务名称
-        cron_desc = f"{name} -> {cron_desc}"  # 构建描述信息
-        break  # 只处理第一个任务
+    """打印 Celery 定时任务启动摘要（定时规则、任务名称、结果入库）。"""
+    schedule = getattr(settings, "CELERY_BEAT_SCHEDULE", {})
+    lines = ["", "=" * 60, "Celery 定时任务已启动", "=" * 60]
 
-    lines = [
-        "",
-        "=" * 60,
-        "[雷电预警] Celery 定时任务已启动",
-        "=" * 60,
-        f"  Broker      : {broker}",  # 消息代理地址
-        f"  定时规则    : {cron_desc}",  # 定时规则描述
-        f"  任务名称    : {task_name}",  # 任务名称
-        f"  数据窗口    : 当前时刻往前 {LOOKBACK_MINUTES} 分钟",  # 数据回溯时间
-        f"  结果入库    : MySQL lightning_warning_result",  # 结果存储位置
-        f"  Worker 节点 : {node_name}",  # Worker 节点名称
-        f"  Worker pid  : {worker_pid}",  # Worker 进程ID
-        f"  Beat pid    : {beat_pid}",  # Beat 进程ID
+    for key, meta in _BEAT_TASK_DISPLAY.items():
+        item = schedule.get(key)
+        if not item:
+            continue
+        storage = meta["storage"]
+        cron_desc = _describe_beat_schedule(item.get("schedule"))
+        lines.extend(
+            [
+                f"[{meta['label']}]",
+                f"  定时规则    : {cron_desc}",
+                f"  任务名称    : {item.get('task', '')}",
+                f"  结果入库    : {storage}",
+                "",
+            ]
+        )
 
-        "-" * 60,
-        f"  Worker 命令 : {' '.join(worker_cmd)}",  # Worker 启动命令
-        f"  Beat 命令   : {' '.join(beat_cmd)}",  # Beat 启动命令
-        "=" * 60,
-        "",
-    ]
-    print("\n".join(lines), flush=True)  # 打印启动信息
+    lines.append("=" * 60)
+    lines.append("")
+    print("\n".join(lines), flush=True)
 
 
 def _pid_file(name: str) -> Path:

@@ -192,7 +192,11 @@ CELERY_BEAT_SCHEDULE = {
         # 要执行的任务路径（模块.函数名）
         "task": "lightning_warning.celery_beat.tasks.run_lightning_warning_schedule_task",
         # 调度规则：每6分钟执行一次（在第0、6、12、18、24、30、36、42、48、54分钟触发）
-        "schedule": crontab(minute="*/6"),
+        "schedule": crontab(minute="1-59/6"),
+    },
+    "reflectance-every-6-minutes": {
+        "task": "reflectance.celery_beat.tasks.run_reflectance_schedule_task",
+        "schedule": crontab(minute="1-59/6"),
     },
 }
 

@@ -1,6 +1,5 @@
 import logging
-import json
-from pathlib import Path
+
 import cartopy.crs as ccrs
 import cinrad
 import matplotlib
@@ -8,15 +7,14 @@ import matplotlib
 matplotlib.use("Agg")  # 设置matplotlib后端为非交互式模式，适用于服务器环境
 import matplotlib.pyplot as plt
 import numpy as np
-from django.conf import settings
 from rest_framework.exceptions import APIException, NotFound
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from reflectance.celery_beat.schedule_component import get_reflectance_from_local
 from reflectance.music.music_radar import radar_bin_path
 
 logger = logging.getLogger(__name__)
-REFLECTANCE_RENDER_DPI = 600
 
 # RADAR_BIN_PATH = Path(__file__).resolve().parent / "Z_RADA_C_BABJ_20260506000014_P_DOR_ACHN_CREF_20260505_235400.bin"
 
@@ -26,11 +24,6 @@ class RadarDataError(APIException):
     default_detail = "雷达数据处理失败"  # 默认错误信息
     default_code = "radar_data_error"  # 错误代码
 
-# 辅助函数，处理数据用于绘图
-def _data_for_plot(data):
-    d = np.ma.masked_invalid(np.asarray(data, dtype=float))  # 将无效数据掩码
-    return np.where(d.mask, np.nan, d.filled(np.nan))  # 掩码数据替换为NaN
-
 # 反射率图片生成接口
 class ReflectanceView(APIView):
     def get(self, request):
@@ -39,166 +32,23 @@ class ReflectanceView(APIView):
             return Response({"code": 400, "msg": "缺少参数 time"})
 
         try:
-            with radar_bin_path(request) as (file_path, selected_time):
-                img_dir = Path(settings.MEDIA_ROOT) / "reflectance"
-                img_dir.mkdir(parents=True, exist_ok=True)
-
-                # 高优先级性能优化：按已选 bin 时次缓存渲染结果，命中则直接返回
-                cache_key = (
-                    selected_time.replace("-", "").replace(":", "").replace(" ", "")
-                    if selected_time
-                    else Path(file_path).stem
-                )
-                image_filename = f"reflectance_{cache_key}.png"
-                image_path = img_dir / image_filename
-                meta_path = image_path.with_suffix(".json")
-                corners = None
-                response_time = selected_time
-
-                if image_path.exists():
-                    # 命中图片缓存时，优先读取同名元数据缓存，避免再次解析 bin
-                    if meta_path.exists():
-                        try:
-                            meta = json.loads(meta_path.read_text(encoding="utf-8"))
-                            corners = meta.get("corners")
-                            response_time = meta.get("time", response_time) or response_time
-                        except (OSError, json.JSONDecodeError):
-                            corners = None
-
-                    # 兼容历史缓存：没有元数据时，回退到读取 bin 计算 corners 并补写元数据
-                    if not corners:
-                        f = cinrad.io.MocMosaic(str(file_path))
-                        min_lon = float(np.nanmin(f.lon))
-                        max_lon = float(np.nanmax(f.lon))
-                        min_lat = float(np.nanmin(f.lat))
-                        max_lat = float(np.nanmax(f.lat))
-                        corners = {
-                            "left_bottom": {"lon": min_lon, "lat": min_lat},
-                            "right_bottom": {"lon": max_lon, "lat": min_lat},
-                            "right_top": {"lon": max_lon, "lat": max_lat},
-                            "left_top": {"lon": min_lon, "lat": max_lat},
-                        }
-                        try:
-                            meta_path.write_text(
-                                json.dumps({"time": response_time, "corners": corners}, ensure_ascii=False),
-                                encoding="utf-8",
-                            )
-                        except OSError:
-                            pass
-
-                else:
-                    f = cinrad.io.MocMosaic(str(file_path))  # 读取雷达bin文件
-                    data_transparent = _data_for_plot(f.data)  # 处理数据用于绘图
-
-                    # 与降水图一致：无回波/占位格点常为 0，jet+vmin=0 会整块深蓝；<1 视为透明
-                    arr = np.asarray(data_transparent, dtype=float)
-                    data_plot = np.where(np.isfinite(arr) & (arr < 1), np.nan, arr)
-
-                    fig, ax = plt.subplots(
-                        figsize=(16, 12),
-                        subplot_kw={"projection": ccrs.PlateCarree()},
-                        facecolor="none",
-                    )
-
-                    # 强制设置坐标轴和图形背景为透明
-                    ax.set_facecolor("none")
-                    fig.patch.set_facecolor("none")
-                    ax.patch.set_facecolor("none")
-                    ax.patch.set_alpha(0.0)
-                    ax.patch.set_visible(False)
-
-                    # 关键：关闭 Cartopy 默认的 Ocean 底图
-                    try:
-                        ax.background_patch.set_facecolor("none")
-                        ax.background_patch.set_alpha(0.0)
-                        ax.background_patch.set_visible(False)
-                        ax.outline_patch.set_visible(False)
-                    except AttributeError:
-                        pass
-
-                    cmap = plt.cm.jet.copy()
-                    cmap.set_bad((0.0, 0.0, 0.0, 0.0))
-
-                    ax.pcolormesh(
-                        f.lon,
-                        f.lat,
-                        np.ma.masked_invalid(data_plot),
-                        cmap=cmap,
-                        vmin=0, vmax=70,
-                        shading="auto",
-                        transform=ccrs.PlateCarree(),
-                        alpha=1.0,
-                    )
-
-                    min_lon = float(np.nanmin(f.lon))
-                    max_lon = float(np.nanmax(f.lon))
-                    min_lat = float(np.nanmin(f.lat))
-                    max_lat = float(np.nanmax(f.lat))
-                    corners = {
-                        "left_bottom": {"lon": min_lon, "lat": min_lat},
-                        "right_bottom": {"lon": max_lon, "lat": min_lat},
-                        "right_top": {"lon": max_lon, "lat": max_lat},
-                        "left_top": {"lon": min_lon, "lat": max_lat},
-                    }
-
-                    ax.set_extent(
-                        [min_lon, max_lon, min_lat, max_lat],
-                        crs=ccrs.PlateCarree(),
-                    )
-                    # 再次确保背景不可见（防止 set_extent 后重新触发）
-                    try:
-                        ax.background_patch.set_facecolor("none")
-                        ax.background_patch.set_alpha(0.0)
-                        ax.background_patch.set_visible(False)
-                        ax.outline_patch.set_visible(False)
-                    except AttributeError:
-                        pass
-
-                    ax.set_axis_off()
-
-                    plt.savefig(
-                        str(image_path),
-                        dpi=REFLECTANCE_RENDER_DPI,
-                        bbox_inches="tight",
-                        pad_inches=0,
-                        facecolor="none",
-                        transparent=True,
-                    )
-                    plt.close(fig)
-                    try:
-                        meta_path.write_text(
-                            json.dumps({"time": response_time, "corners": corners}, ensure_ascii=False),
-                            encoding="utf-8",
-                        )
-                    except OSError:
-                        pass
-
-            media_url = settings.MEDIA_URL  # 获取媒体URL
-            if not str(media_url).endswith("/"):  # 确保URL以/结尾
-                media_url = f"{media_url}/"
-            image_url = f"{media_url}reflectance/{image_filename}" # 完整图片URL
+            result = get_reflectance_from_local(time_str)
             return Response(
                 {
                     "code": 200,
                     "msg": "获取成功",
                     "data": {
-                        "url": image_url,
-                        "time": response_time,
-                        # "corners": corners or {},
+                        "url": result["image_url"],
+                        "time": result["response_time"],
                     },
                 }
             )
-
-        except NotFound:  # 捕获文件不存在异常
-            raise
-        except OSError as exc:
-            logger.exception("MUSIC 获取雷达文件失败")
-            raise RadarDataError(detail=str(exc)) from exc
-        except RadarDataError:  # 捕获雷达数据异常
-            raise
-        except Exception:  # 捕获其他所有异常
-            logger.exception("雷达反射率出图失败")  # 记录异常日志
-            raise RadarDataError(detail="数据处理失败，请稍后重试")  # 抛出统一异常
+        except NotFound as exc:
+            detail = exc.detail if isinstance(exc.detail, str) else str(exc.detail)
+            return Response({"code": 404, "msg": detail}, status=404)
+        except Exception:
+            logger.exception("反射率本地图片查询失败")
+            raise RadarDataError(detail="数据处理失败，请稍后重试")
 
 #天津预警数据接口
 class WarningView(APIView):

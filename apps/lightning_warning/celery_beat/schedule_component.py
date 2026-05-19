@@ -24,6 +24,9 @@ def _save_to_mysql(calculator, start_dt, end_dt, warning_list: List[Dict[str, An
             end_time=end_dt,  # 结束时间
             response_time=end_dt,  # 响应时间（使用结束时间）
             device_id=int(row["device_id"]),  # 设备ID
+            device_name=str(row.get("device_name", "")),
+            lng=row.get("lng"),
+            lat=row.get("lat"),
             warning_type=int(row["type"]),  # 预警类型/等级
             max_val=int(row["max_val"]),  # 最大值
             min_val=int(row["min_val"]),  # 最小值
@@ -40,6 +43,9 @@ def _rows_to_api(qs) -> List[Dict[str, Any]]:
     return [
         {
             "device_id": int(row.device_id),  # 设备ID
+            "device_name": row.device_name or "",
+            "lng": row.lng,
+            "lat": row.lat,
             "type": int(row.warning_type),  # 预警类型
             "max_val": int(row.max_val),  # 最大值
             "min_val": int(row.min_val),  # 最小值

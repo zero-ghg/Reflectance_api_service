@@ -1,5 +1,4 @@
 import sys
-import tempfile
 import urllib.request
 from contextlib import contextmanager
 from datetime import datetime, timedelta
@@ -28,8 +27,9 @@ MUSIC_RADAR_DEFAULT_PARAMS = {
     # 平台单次返回有上限（常见 50 条），此处取单次上限并配合分段查询汇总。
     "limitCnt": "50",  # 单次查询最大返回条数
 }
-# bin 文件缓存有效期（秒）：12小时
-BIN_CACHE_TTL_SECONDS = 12 * 60 * 60
+# 雷达 bin 本地缓存目录（项目内 apps/img/radar_bin，不自动删除）
+_APPS_DIR = Path(__file__).resolve().parents[2]
+RADAR_BIN_CACHE_DIR = _APPS_DIR / "img" / "radar_bin"
 # MUSIC 查询分段时长（分钟）：每次查询3小时，规避单次条数上限截断
 MUSIC_QUERY_SEGMENT_MINUTES = 180
 # MUSIC 文件时次是否为 UTC（格林威治时间）
@@ -431,37 +431,14 @@ def _format_selected_time(file_info) -> str:
     return dt.strftime("%Y-%m-%d %H:%M:%S")
 
 
-def _cleanup_expired_cache_files(cache_dir: Path, ttl_seconds: int):
-    """
-    清理超过指定有效期的缓存文件
-
-    Args:
-        cache_dir: 缓存目录路径
-        ttl_seconds: 文件有效期（秒），超过此时长的文件将被删除
-    """
-    now_ts = datetime.now().timestamp()
-    for fp in cache_dir.glob("*"):
-        if not fp.is_file():
-            continue
-        try:
-            # 检查文件修改时间是否超过有效期
-            if now_ts - fp.stat().st_mtime > ttl_seconds:
-                fp.unlink(missing_ok=True)
-        except OSError:
-            # 清理失败不影响主流程
-            continue
-
-
 @contextmanager
 def radar_bin_path(request=None):
     """
-    上下文管理器：从 MUSIC 获取雷达 .bin 文件，使用后自动清理
+    上下文管理器：从 MUSIC 获取雷达 .bin 文件
 
     功能说明：
     - 根据请求参数查询雷达文件
-    - 下载 bin 文件到本地缓存（避免重复下载）
-    - 自动管理缓存文件的有效期
-    - 使用完毕后无需手动清理
+    - 下载 bin 到项目目录 apps/img/radar_bin/（已存在则复用，不自动删除）
 
     时间规则：从每小时0分开始，每6分钟刷新一次（00,06,12,18,24,30,36,42,48,54）
 
@@ -487,11 +464,9 @@ def radar_bin_path(request=None):
     # 格式化选中文件的时间
     selected_time = _format_selected_time(latest)
 
-    # 高优先级性能优化：bin 文件落本地缓存，避免同一文件反复下载
-    cache_dir = Path(tempfile.gettempdir()) / "music_radar_cache" / "bin"
+    # bin 落盘到项目内目录，避免同一文件反复下载
+    cache_dir = RADAR_BIN_CACHE_DIR
     cache_dir.mkdir(parents=True, exist_ok=True)
-    # 清理过期的缓存文件
-    _cleanup_expired_cache_files(cache_dir, BIN_CACHE_TTL_SECONDS)
     # 构造缓存文件路径
     cache_file = cache_dir / Path(latest.fileName).name
 
