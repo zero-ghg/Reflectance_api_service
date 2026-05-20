@@ -98,7 +98,7 @@ def get_reflectance_from_local(time_param: str) -> Dict[str, Any]:
     """
     仅从本地 apps/img/reflectance 读取 PNG，不调用 MUSIC、不渲染。
     1. 按前端 time 在本地精确匹配；
-    2. 若无，向过去取 file_time <= time 的最近一张。
+    2. 若无，取与请求时次时间差最小的一张。
     """
     req_dt = _parse_front_time(time_param).replace(tzinfo=None, microsecond=0)
     img_dir = _reflectance_img_dir()
@@ -119,19 +119,19 @@ def get_reflectance_from_local(time_param: str) -> Dict[str, Any]:
     if exact_path.is_file():
         return _local_image_result(exact_path, req_dt)
 
-    # 2. 向上查询：不晚于请求时刻的最近一张
+    # 2. 未精确命中时，取离请求时刻最近的一张（可早于或晚于请求时刻）
     candidates = []
     for png_path in png_files:
         file_dt = _image_time_from_path(png_path)
-        if file_dt is not None and file_dt < req_dt:
-            candidates.append((file_dt, png_path))
+        if file_dt is not None:
+            candidates.append((abs(file_dt - req_dt), file_dt, png_path))
 
     if not candidates:
-        raise NotFound(f"请求时次 {req_dt.strftime('%Y-%m-%d %H:%M:%S')} 之前无本地反射率图片")
+        raise NotFound("本地反射率图片缺少可识别的时次信息")
 
-    file_dt, chosen_path = max(candidates, key=lambda item: item[0])
+    _delta, file_dt, chosen_path = min(candidates, key=lambda item: item[0])
     logger.info(
-        "请求时次 %s 无本地图片，回退至 %s",
+        "请求时次 %s 无精确本地图片，返回最近时次 %s",
         req_dt.strftime("%Y-%m-%d %H:%M:%S"),
         file_dt.strftime("%Y-%m-%d %H:%M:%S"),
     )

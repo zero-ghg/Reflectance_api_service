@@ -122,15 +122,15 @@ def get_precipitation_from_local(product_key: str, time_param: str) -> Dict[str,
     candidates = []
     for png_path in png_files:
         file_dt = _image_time_from_path(product.key, png_path)
-        if file_dt is not None and file_dt <= req_dt:
-            candidates.append((file_dt, png_path))
+        if file_dt is not None:
+            candidates.append((abs(file_dt - req_dt), file_dt, png_path))
 
     if not candidates:
-        raise NotFound(f"请求时次 {req_dt.strftime('%Y-%m-%d %H:%M:%S')} 之前无本地{product.label}图片")
+        raise NotFound(f"本地{product.label}图片缺少可识别的时次信息")
 
-    file_dt, chosen_path = max(candidates, key=lambda item: item[0])
+    _delta, file_dt, chosen_path = min(candidates, key=lambda item: item[0])
     logger.info(
-        "请求时次 %s 无本地%s图片，回退至 %s",
+        "请求时次 %s 无精确本地%s图片，返回最近时次 %s",
         req_dt.strftime("%Y-%m-%d %H:%M:%S"),
         product.label,
         file_dt.strftime("%Y-%m-%d %H:%M:%S"),
