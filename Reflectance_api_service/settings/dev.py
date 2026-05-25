@@ -62,7 +62,6 @@ INSTALLED_APPS = [
     "django_celery_beat",
     'reflectance.apps.ReflectanceConfig',
     'lightning_warning.apps.WarningConfig',
-    'report.apps.ReportConfig'
 
 ]
 

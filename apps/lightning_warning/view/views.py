@@ -11,7 +11,7 @@ from django.utils.dateparse import parse_datetime
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from lightning_warning.celery_beat.schedule_component import compute_and_save, query_by_time
+from lightning_warning.celery_beat.schedule_component import query_by_time, query_nearest_by_time
 
 logger = logging.getLogger(__name__)
 
@@ -384,30 +384,13 @@ class Detail_Warning(APIView):
             return value.replace(tzinfo=None)
         return value
 
-    def _pg_has_data_at_end_time(self, end_dt) -> bool:
-        """按前端传入的 end_time 在 PostgreSQL 中做指定时刻查询。"""
-        try:
-            conn = psycopg2.connect(**PG_CONFIG)
-            cursor = conn.cursor()
-            cursor.execute(
-                "SELECT 1 FROM t_atmo_data WHERE time = %s LIMIT 1",
-                (end_dt,),
-            )
-            exists = cursor.fetchone() is not None
-            cursor.close()
-            conn.close()
-            return exists
-        except Exception as e:
-            logger.exception(f"PostgreSQL 指定时次查询失败: {e}")
-            return False
-
     def _find_nearest_pg_end_time_before(self, query_dt) -> Optional[datetime]:
-        """查询严格早于 query_dt 的最近一条监测数据时间。"""
+        """查询不晚于 query_dt 的最近一条监测数据时间（PG 最新时次）。"""
         try:
             conn = psycopg2.connect(**PG_CONFIG)
             cursor = conn.cursor(cursor_factory=RealDictCursor)
             cursor.execute(
-                "SELECT MAX(time) AS latest_time FROM t_atmo_data WHERE time < %s",
+                "SELECT MAX(time) AS latest_time FROM t_atmo_data WHERE time <= %s",
                 (query_dt,),
             )
             row = cursor.fetchone()
@@ -417,26 +400,6 @@ class Detail_Warning(APIView):
         except Exception as e:
             logger.exception(f"PostgreSQL 查询最近时次失败: {e}")
             return None
-
-    def resolve_end_time(self, query_dt) -> datetime:
-        """
-        解析计算用的 end_time：前端传什么优先用什么；
-        仅当 PG 在该时刻无数据时，向上（向过去）取最近时次。
-        确定 end_time 后，由 compute_and_save 再向前回溯 10 分钟计算。
-        """
-        if self._pg_has_data_at_end_time(query_dt):
-            return query_dt
-
-        nearest = self._find_nearest_pg_end_time_before(query_dt)
-        if nearest is None:
-            logger.warning(f"请求时次 {query_dt} 之前无 PostgreSQL 监测数据")
-            return query_dt
-
-        logger.info(
-            f"请求时次 {query_dt} 在 PostgreSQL 无数据，"
-            f"回退至最近时次 {nearest}"
-        )
-        return nearest
 
     def _fetch_device_config_map(self) -> Dict[int, Dict[str, Any]]:
         """从 PostgreSQL 设备配置表查询 device_id -> 设备信息映射。"""
@@ -562,24 +525,18 @@ class Detail_Warning(APIView):
                 }
             )
 
-        # 2. 在 PG 按指定 end_time 探测；无数据则向上取最近时次
-        end_dt = self.resolve_end_time(query_dt)
-
-        # 3. 回退后的时次若不同，再查一次 MySQL 缓存
-        if end_dt != query_dt:
-            warning_list, resp_time = query_by_time(self, end_dt)
-            if warning_list:
-                return Response(
-                    {
-                        "code": 200,
-                        "msg": "获取成功",
-                        "data": {"warning": warning_list, "time": resp_time},
-                    }
-                )
-
-        # 4. 确定 end_time 后，向前回溯 10 分钟从 PG 取数计算并写入 MySQL
-        warning_list, resp_time = compute_and_save(self, end_dt)
+        # 2. 查不到时，返回不晚于请求时刻的最近一批缓存结果（不触发重算）
+        warning_list, resp_time, _ = query_nearest_by_time(self, query_dt)
+        if warning_list:
+            return Response(
+                {
+                    "code": 200,
+                    "msg": "获取成功",
+                    "data": {"warning": warning_list, "time": resp_time},
+                }
+            )
 
         return Response(
-            {"code": 200,"msg": "获取成功","data": {"warning": warning_list, "time": resp_time},})
+            {"code": 200, "msg": "未查询到预警数据", "data": {"warning": [], "time": ""}}
+        )
 
