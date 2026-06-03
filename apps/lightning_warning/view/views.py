@@ -17,11 +17,11 @@ logger = logging.getLogger(__name__)
 
 # PostgreSQL 数据库配置（写死在文件中）
 PG_CONFIG = {
-    "host": "localhost",
+    "host": "192.168.30.91",
     "port": 5432,
-    "database": "leidian",  # 修改为你的数据库名
+    "database": "newworking",  # 修改为你的数据库名
     "user": "postgres",  # 修改为你的用户名
-    "password": "123456",  # 修改为你的密码
+    "password": "ADMIN@12344321",  # 修改为你的密码
     "options": "-c search_path=atmo,public"
 }
 

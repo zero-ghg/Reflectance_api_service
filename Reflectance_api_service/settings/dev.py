@@ -104,7 +104,7 @@ DATABASES = {
         'ENGINE': 'django.db.backends.mysql',
         'NAME': 'leidian_warning',       # 刚才创建的数据库名
         'USER': 'root',      # PostgreSQL 用户名
-        'PASSWORD': '123456',  # 安装时设置的密码
+        'PASSWORD': 'root',  # 安装时设置的密码
         'HOST': 'localhost',
         'PORT': '3306'         # PostgreSQL 默认端口
 
