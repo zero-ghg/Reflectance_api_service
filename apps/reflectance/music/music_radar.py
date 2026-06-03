@@ -1,33 +1,33 @@
-import sys
 import urllib.request
 from contextlib import contextmanager
 from datetime import datetime, timedelta
 from pathlib import Path
 import re
+import tempfile
+
+from reflectance.music.radar_rest import (
+    DATA_FORMAT,
+    PASSWORD as REST_PASSWORD,
+    RADAR_DATA_CODE,
+    RADAR_INTERFACE_ID,
+    USER_ID as REST_USER_ID,
+    query_radar_files_by_time_range,
+)
 
 # 配置 MUSIC SDK 的源码路径，将其添加到 Python 模块搜索路径中
-_SRC = Path(__file__).resolve().parents[3] / "Reflectance_api_service" / "src"
-if str(_SRC) not in sys.path:
-    sys.path.insert(0, str(_SRC))
 
 # ==================== MUSIC 平台配置 ====================
 # MUSIC 客户端配置文件路径
-MUSIC_CLIENT_CONFIG = _SRC / "demo" / "client.config"
-# MUSIC 平台认证用户ID
-MUSIC_USER_ID = "BETJ_FLZX_LI_YUN_BO"
+MUSIC_USER_ID = REST_USER_ID
 # MUSIC 平台认证密码
-MUSIC_PASSWORD = "Zhfymqm672!@$"
+MUSIC_PASSWORD = REST_PASSWORD
 # MUSIC 接口ID：根据时间范围查询雷达文件
-MUSIC_INTERFACE_ID = "getRadaFileByTimeRange"
+MUSIC_INTERFACE_ID = RADAR_INTERFACE_ID
 # MUSIC 雷达数据查询默认参数
 MUSIC_RADAR_DEFAULT_PARAMS = {
-    "dataCode": "RADA_L3_MST_CREF_QC",  # 数据代码：组合反射率质控产品
-    "dataFormat": "json",  # 返回数据格式
-    "tdspath": "true",  # 启用 TDS 路径
-    # 平台单次返回有上限（常见 50 条），此处取单次上限并配合分段查询汇总。
-    "limitCnt": "50",  # 单次查询最大返回条数
+    "dataCode": RADAR_DATA_CODE,
+    "dataFormat": DATA_FORMAT,
 }
-# 雷达 bin 本地缓存目录（项目内 apps/img/radar_bin，不自动删除）
 _APPS_DIR = Path(__file__).resolve().parents[2]
 RADAR_BIN_CACHE_DIR = _APPS_DIR / "img" / "radar_bin"
 # MUSIC 查询分段时长（分钟）：每次查询3小时，规避单次条数上限截断
@@ -36,24 +36,6 @@ MUSIC_QUERY_SEGMENT_MINUTES = 180
 MUSIC_FILE_TIME_IS_UTC = True
 # 本地业务时区相对 UTC 的偏移小时（北京时间 +8）
 LOCAL_TIME_OFFSET_HOURS = 8
-
-from cma.music.DataQueryClient import DataQueryClient
-
-
-def _get_client():
-    """
-    创建并返回 MUSIC 数据查询客户端实例
-
-    Returns:
-        DataQueryClient: MUSIC 数据查询客户端对象
-
-    Raises:
-        FileNotFoundError: 当 client.config 配置文件不存在时抛出
-    """
-    config_file = Path(MUSIC_CLIENT_CONFIG)
-    if not config_file.is_file():
-        raise FileNotFoundError(f"未找到 client.config: {config_file}")
-    return DataQueryClient(configFile=str(config_file))
 
 
 def _parse_front_time(time_param: str) -> datetime:
@@ -172,7 +154,7 @@ def _iter_segment_ranges(day_start: datetime, day_end: datetime, segment_minutes
     return ranges
 
 
-def _query_file_list_by_range(client, user_id, pwd, interface_id, base_params, start_time: str, end_time: str):
+def _query_file_list_by_range(base_params, start_time: str, end_time: str):
     """
     按时间段查询单次文件列表。
     约定：start_time/end_time 传入为本地业务时间（北京时间），
@@ -184,12 +166,8 @@ def _query_file_list_by_range(client, user_id, pwd, interface_id, base_params, s
         start_dt = start_dt - timedelta(hours=LOCAL_TIME_OFFSET_HOURS)
         end_dt = end_dt - timedelta(hours=LOCAL_TIME_OFFSET_HOURS)
 
-    params = dict(base_params)
-    params["timerange"] = f"[{_format_music_time(start_dt)},{_format_music_time(end_dt)}]"
-    ret = client.callAPI_to_fileList(user_id, pwd, interface_id, params)
-    if ret.request.errorCode != 0:
-        raise RuntimeError(f"MUSIC 接口返回失败: {ret.request.errorMessage}")
-    return ret.fileInfos or []
+    time_range = f"[{_format_music_time(start_dt)},{_format_music_time(end_dt)}]"
+    return query_radar_files_by_time_range(time_range)
 
 
 def _dedup_extend(dst, seen, file_infos):
@@ -242,16 +220,12 @@ def _query_radar_files(time_param=None):
     Raises:
         RuntimeError: 当 MUSIC 接口调用失败或未返回任何文件时抛出
     """
-    client = _get_client()
-    user_id = MUSIC_USER_ID
-    pwd = MUSIC_PASSWORD
-    interface_id = MUSIC_INTERFACE_ID
-
     # 复制默认参数，移除不需要的字段
     base_params = dict(MUSIC_RADAR_DEFAULT_PARAMS)
     base_params.pop("time", None)
     base_params.pop("startTime", None)
     base_params.pop("endTime", None)
+    base_params.pop("timeRange", None)
 
     # getRadaFileByTimeRange 使用 timerange，不接受 startTime/endTime
     day_start, day_end = _calculate_day_bounds(time_param)
@@ -263,9 +237,7 @@ def _query_radar_files(time_param=None):
     if not time_param:
         # 未指定时次：从当天最后分段向前查询，命中首个非空分段即停止。
         for start_time, end_time in reversed(segment_ranges):
-            part = _query_file_list_by_range(
-                client, user_id, pwd, interface_id, base_params, start_time, end_time
-            )
+            part = _query_file_list_by_range(base_params, start_time, end_time)
             if not part:
                 continue
             _dedup_extend(merged_file_infos, seen, part)
@@ -278,9 +250,7 @@ def _query_radar_files(time_param=None):
         found_not_later = False
         for i in range(req_idx, -1, -1):
             start_time, end_time = segment_ranges[i]
-            part = _query_file_list_by_range(
-                client, user_id, pwd, interface_id, base_params, start_time, end_time
-            )
+            part = _query_file_list_by_range(base_params, start_time, end_time)
             _dedup_extend(merged_file_infos, seen, part)
             if _has_candidate_not_later_than(part, req_dt):
                 found_not_later = True
@@ -290,9 +260,7 @@ def _query_radar_files(time_param=None):
         if not found_not_later and not merged_file_infos:
             for i in range(req_idx + 1, len(segment_ranges)):
                 start_time, end_time = segment_ranges[i]
-                part = _query_file_list_by_range(
-                    client, user_id, pwd, interface_id, base_params, start_time, end_time
-                )
+                part = _query_file_list_by_range(base_params, start_time, end_time)
                 if not part:
                     continue
                 _dedup_extend(merged_file_infos, seen, part)
@@ -463,6 +431,21 @@ def radar_bin_path(request=None):
     latest = _pick_target_file(file_infos, time_param)
     # 格式化选中文件的时间
     selected_time = _format_selected_time(latest)
+    suffix = Path(latest.fileName).suffix.lower()
+
+    if suffix in {".png", ".jpg", ".jpeg"}:
+        tmp = tempfile.NamedTemporaryFile(suffix=suffix, delete=False)
+        tmp_path = Path(tmp.name)
+        tmp.close()
+        try:
+            _download_bin_file(latest.fileUrl, tmp_path)
+            yield tmp_path, selected_time
+        finally:
+            try:
+                tmp_path.unlink()
+            except FileNotFoundError:
+                pass
+        return
 
     # bin 落盘到项目内目录，避免同一文件反复下载
     cache_dir = RADAR_BIN_CACHE_DIR
@@ -491,7 +474,22 @@ def _download_bin_file(file_url, dest_path):
     req = urllib.request.Request(file_url)
     with urllib.request.urlopen(req, timeout=60) as resp:
         data = resp.read()
+    suffix = Path(dest_path).suffix.lower()
+    if suffix == ".png" and not data.startswith(b"\x89PNG\r\n\x1a\n"):
+        preview = data[:200].decode("utf-8", errors="replace")
+        raise RuntimeError(f"下载到的雷达图片无效: {preview}")
+    if suffix in {".jpg", ".jpeg"} and not data.startswith(b"\xff\xd8"):
+        preview = data[:200].decode("utf-8", errors="replace")
+        raise RuntimeError(f"下载到的雷达图片无效: {preview}")
     with open(dest_path, "wb") as f:
         f.write(data)
     return dest_path
 
+
+def _download_bin_file(file_url, dest_path):
+    req = urllib.request.Request(file_url)
+    with urllib.request.urlopen(req, timeout=60) as resp:
+        data = resp.read()
+    with open(dest_path, "wb") as f:
+        f.write(data)
+    return dest_path

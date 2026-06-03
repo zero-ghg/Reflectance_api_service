@@ -1,6 +1,6 @@
 import logging
 from datetime import timedelta
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from django.utils import timezone
 
@@ -79,6 +79,32 @@ def query_by_time(calculator, query_dt) -> Tuple[List[Dict[str, Any]], str]:
     return _rows_to_api(qs), calculator._format_api_time(end_dt)
 
 
+def query_nearest_by_time(calculator, query_dt) -> Tuple[List[Dict[str, Any]], str, Optional[Any]]:
+    """
+    查询不晚于 query_dt 的最近一批预警结果。
+
+    返回:
+        (预警数据列表, 响应时间字符串, 命中的 response_time)
+    """
+    row = (
+        LightningWarningResult.objects.using(MYSQL_DB)
+        .filter(response_time__lte=query_dt)
+        .order_by("-response_time")
+        .values("response_time")
+        .first()
+    )
+    if not row:
+        return [], "", None
+
+    nearest_dt = row["response_time"]
+    qs = (
+        LightningWarningResult.objects.using(MYSQL_DB)
+        .filter(response_time=nearest_dt)
+        .order_by("device_id")
+    )
+    return _rows_to_api(qs), calculator._format_api_time(nearest_dt), nearest_dt
+
+
 def compute_and_save(calculator, query_dt) -> Tuple[List[Dict[str, Any]], str]:
     """
     以前端 time 为结束时刻，回溯 10 分钟计算并写入 MySQL。
@@ -115,46 +141,32 @@ def compute_and_save(calculator, query_dt) -> Tuple[List[Dict[str, Any]], str]:
 
 def run_scheduled_job(calculator) -> None:
     """
-    执行定时任务：计算当前时刻的雷电预警并保存到 MySQL。
-
-    参数:
-        calculator: Detail_Warning 实例
+    执行定时任务：取当前时刻，在 PG 中找最近监测时次作为 end_time，
+    再向前回溯 10 分钟计算并写入 MySQL。
     """
-    now_dt = timezone.now()  # 获取当前时间
-    # 移除时区信息，转换为 naive datetime
-    now_dt = now_dt.replace(tzinfo=None)
+    now_dt = timezone.now().replace(tzinfo=None)
 
-    end_dt = now_dt  # 结束时间为当前时间
-    start_dt = end_dt - timedelta(minutes=LOOKBACK_MINUTES)  # 开始时间（回溯10分钟）
+    end_dt = calculator._find_nearest_pg_end_time_before(now_dt)
+    if end_dt is None:
+        logger.warning("PostgreSQL 中无可用监测数据，雷电预警定时任务跳过")
+        return
 
-    # ... existing code ...
-
-    # 打印计算窗口信息
+    start_dt = end_dt - timedelta(minutes=LOOKBACK_MINUTES)
     print(
-        f"[雷电预警] 计算窗口: {calculator._format_api_time(start_dt)}"
-        f" ~ {calculator._format_api_time(end_dt)}，读取 PostgreSQL t_atmo_data",
+        f"[雷电预警] 定时任务: now={calculator._format_api_time(now_dt)}, "
+        f"PG最近时次 end_time={calculator._format_api_time(end_dt)}, "
+        f"窗口=[{calculator._format_api_time(start_dt)}, {calculator._format_api_time(end_dt)}]",
         flush=True,
     )
 
-    # 构建预警列表（从 PostgreSQL 读取电场数据并计算）
-    warning_list = calculator._build_warning_list(
-        start_dt, end_dt, field_key="mesaure_value", unit="kV/m"
-    )
-
-    # 保存到 MySQL
-    saved = _save_to_mysql(calculator, start_dt, end_dt, warning_list)
-
-    # 格式化时间字符串
-    end_str = calculator._format_api_time(end_dt)
-    start_str = calculator._format_api_time(start_dt)
-
-    # 构建日志消息
+    warning_list, resp_time = compute_and_save(calculator, end_dt)
     msg = (
-        f"lightning_warning 定时任务入库: response_time={end_str}, "
-        f"rows={saved}, window=[{start_str},{end_str}]"
+        f"lightning_warning 定时任务入库: response_time={resp_time}, "
+        f"rows={len(warning_list)}, "
+        f"window=[{calculator._format_api_time(start_dt)},{calculator._format_api_time(end_dt)}]"
     )
-    print(msg)  # 打印到控制台
-    logger.info(msg)  # 记录到日志
+    print(msg, flush=True)
+    logger.info(msg)
 
 
 def run_lightning_warning_schedule_once() -> None:

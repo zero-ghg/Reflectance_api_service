@@ -7,7 +7,6 @@ urlpatterns = [
     path('api/v1/', include('users.urls')),
     path('api/v1/radar/', include('reflectance.urls')),
     path('api/v1/warning/', include('lightning_warning.urls')),
-    path('api/v1/report/', include('report.urls')),
     path('api/v1/refresh/', token_refresh)
 ]
 

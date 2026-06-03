@@ -40,5 +40,5 @@ class UserInfoLoginSerializer(serializers.ModelSerializer):
 class UserInfoSerializer(serializers.ModelSerializer):
     class Meta:
         model = UserInfo
-        # fields = "__all__"
-        exclude = ['password', 'is_delete']
+        fields = ['id','username','department']
+        # exclude = ['password', 'is_delete']

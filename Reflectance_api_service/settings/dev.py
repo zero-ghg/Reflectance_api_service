@@ -62,7 +62,6 @@ INSTALLED_APPS = [
     "django_celery_beat",
     'reflectance.apps.ReflectanceConfig',
     'lightning_warning.apps.WarningConfig',
-    'report.apps.ReportConfig'
 
 ]
 
@@ -105,7 +104,7 @@ DATABASES = {
         'ENGINE': 'django.db.backends.mysql',
         'NAME': 'leidian_warning',       # 刚才创建的数据库名
         'USER': 'root',      # PostgreSQL 用户名
-        'PASSWORD': '123456',  # 安装时设置的密码
+        'PASSWORD': 'root',  # 安装时设置的密码
         'HOST': 'localhost',
         'PORT': '3306'         # PostgreSQL 默认端口
 
@@ -182,6 +181,8 @@ CELERY_ENABLE_UTC = False
 CELERY_TASK_TRACK_STARTED = True
 CELERY_TASK_TIME_LIMIT = 60 * 5
 
+CELERY_AUTO_START = 1
+
 # 定时任务配置：每 5 分钟执行一次
 CELERY_BEAT_SCHEDULE = {
     "sync-weather-warning-every-5-minutes": {
@@ -198,14 +199,14 @@ CELERY_BEAT_SCHEDULE = {
         "task": "reflectance.celery_beat.tasks.run_reflectance_schedule_task",
         "schedule": crontab(minute="1-59/6"),
     },
-    "precipitation-1h-every-6-minutes": {
-        "task": "reflectance.celery_beat.tasks.run_precipitation_1h_schedule_task",
-        "schedule": crontab(minute="1-59/6"),
-    },
-    "precipitation-3h-hourly": {
-        "task": "reflectance.celery_beat.tasks.run_precipitation_3h_schedule_task",
-        "schedule": crontab(minute="1"),
-    },
+    # "precipitation-1h-every-6-minutes": {
+    #     "task": "reflectance.celery_beat.tasks.run_precipitation_1h_schedule_task",
+    #     "schedule": crontab(minute="1-59/6"),
+    # },
+    # "precipitation-3h-hourly": {
+    #     "task": "reflectance.celery_beat.tasks.run_precipitation_3h_schedule_task",
+    #     "schedule": crontab(minute="1"),
+    # },
 }
 
 STATIC_URL = '/static/'
