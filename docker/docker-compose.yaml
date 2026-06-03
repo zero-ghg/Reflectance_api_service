@@ -1,0 +1,16 @@
+version: "3"
+
+services:
+  redis:
+    image: redis:alpine
+    container_name: weather_redis
+    restart: always
+    ports:
+      - "38765:6379"  # 映射端口，方便本地连接，不需要可注释
+    volumes:
+      - redis_data:/data  # 持久化数据
+    command: redis-server --appendonly yes # 开启 AOF 持久化
+
+
+volumes:
+  redis_data:
