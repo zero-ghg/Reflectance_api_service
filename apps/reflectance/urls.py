@@ -4,12 +4,10 @@ from apps.reflectance.view.views import (
     PrecipitationOneHourView,
     PrecipitationThreeHourView,
     ReflectanceView,
-    WarningView,
 )
 
 urlpatterns = [
     path("reflectance/", ReflectanceView.as_view()),
     path("precipitation/1h/", PrecipitationOneHourView.as_view()),
     path("precipitation/3h/", PrecipitationThreeHourView.as_view()),
-    path("warning/", WarningView.as_view()),
 ]

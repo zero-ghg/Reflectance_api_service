@@ -13,6 +13,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 from django.conf import settings
 from django.utils import timezone
+from PIL import Image
 from rest_framework.exceptions import NotFound
 
 from reflectance.music.music_radar import _parse_front_time, radar_bin_path
@@ -20,6 +21,7 @@ from reflectance.music.music_radar import _parse_front_time, radar_bin_path
 logger = logging.getLogger(__name__)
 
 REFLECTANCE_RENDER_DPI = 600
+REFLECTANCE_OPACITY = 0.8
 
 
 class _ScheduleRequest:
@@ -32,6 +34,16 @@ class _ScheduleRequest:
 def _data_for_plot(data):
     d = np.ma.masked_invalid(np.asarray(data, dtype=float))
     return np.where(d.mask, np.nan, d.filled(np.nan))
+
+
+def _write_reflectance_png_with_alpha(src_path: Path, dest_path: Path) -> None:
+    img = Image.open(src_path).convert("RGBA")
+    arr = np.asarray(img).copy()
+    alpha = arr[:, :, 3].astype(np.float32)
+    visible = alpha > 0
+    alpha[visible] = np.clip(alpha[visible] * REFLECTANCE_OPACITY, 0, 255)
+    arr[:, :, 3] = alpha.astype(np.uint8)
+    Image.fromarray(arr, mode="RGBA").save(dest_path)
 
 
 def _reflectance_img_dir() -> Path:
@@ -123,19 +135,41 @@ def get_reflectance_from_local(time_param: str) -> Dict[str, Any]:
     candidates = []
     for png_path in png_files:
         file_dt = _image_time_from_path(png_path)
-        if file_dt is not None:
-            candidates.append((abs(file_dt - req_dt), file_dt, png_path))
+        if file_dt is not None and file_dt <= req_dt:
+            candidates.append((file_dt, png_path))
 
     if not candidates:
         raise NotFound("本地反射率图片缺少可识别的时次信息")
 
-    _delta, file_dt, chosen_path = min(candidates, key=lambda item: item[0])
+    file_dt, chosen_path = max(candidates, key=lambda item: item[0])
     logger.info(
         "请求时次 %s 无精确本地图片，返回最近时次 %s",
         req_dt.strftime("%Y-%m-%d %H:%M:%S"),
         file_dt.strftime("%Y-%m-%d %H:%M:%S"),
     )
     return _local_image_result(chosen_path, file_dt)
+
+
+def get_reflectance_exact_from_local(time_param: str) -> Dict[str, Any]:
+    req_dt = _parse_front_time(time_param).replace(tzinfo=None, microsecond=0)
+    img_dir = _reflectance_img_dir()
+    if not img_dir.is_dir():
+        raise NotFound("本地暂无反射率图片")
+
+    png_files = list(img_dir.glob("reflectance_*.png"))
+    if not png_files:
+        raise NotFound("本地暂无反射率图片")
+
+    for png_path in png_files:
+        file_dt = _image_time_from_path(png_path)
+        if file_dt == req_dt:
+            return _local_image_result(png_path, req_dt)
+
+    exact_path = img_dir / f"reflectance_{_time_to_cache_key(req_dt)}.png"
+    if exact_path.is_file():
+        return _local_image_result(exact_path, req_dt)
+
+    raise NotFound("本地暂无指定时次的反射率图片")
 
 
 def align_to_six_minute_grid(dt: Optional[datetime] = None) -> datetime:
@@ -170,6 +204,24 @@ def render_reflectance_image(time_param: Optional[str] = None) -> Dict[str, Any]
         meta_path = image_path.with_suffix(".json")
         response_time = selected_time
         from_cache = False
+
+        if Path(file_path).suffix.lower() in {".png", ".jpg", ".jpeg"}:
+            from_cache = image_path.exists()
+            _write_reflectance_png_with_alpha(file_path, image_path)
+            try:
+                meta_path.write_text(
+                    json.dumps({"time": response_time, "corners": None}, ensure_ascii=False),
+                    encoding="utf-8",
+                )
+            except OSError:
+                pass
+            return {
+                "image_filename": image_filename,
+                "image_path": str(image_path),
+                "image_url": _build_image_url(image_filename),
+                "response_time": response_time,
+                "from_cache": from_cache,
+            }
 
         if image_path.exists():
             from_cache = True
@@ -227,7 +279,7 @@ def render_reflectance_image(time_param: Optional[str] = None) -> Dict[str, Any]
                 vmax=70,
                 shading="auto",
                 transform=ccrs.PlateCarree(),
-                alpha=1.0,
+                alpha=REFLECTANCE_OPACITY,
             )
 
             min_lon = float(np.nanmin(f.lon))

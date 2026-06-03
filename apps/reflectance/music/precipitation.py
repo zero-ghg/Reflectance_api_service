@@ -7,9 +7,7 @@ from typing import Dict
 
 from reflectance.music.music_radar import (
     LOCAL_TIME_OFFSET_HOURS,
-    MUSIC_PASSWORD,
     MUSIC_FILE_TIME_IS_UTC,
-    MUSIC_USER_ID,
     RADAR_BIN_CACHE_DIR,
     _calculate_day_bounds,
     _dedup_extend,
@@ -17,12 +15,12 @@ from reflectance.music.music_radar import (
     _extract_file_time,
     _find_segment_index,
     _format_music_time,
-    _get_client,
     _has_candidate_not_later_than,
     _iter_segment_ranges,
     _normalize_file_time,
     _parse_front_time,
 )
+from reflectance.music.radar_rest import query_music_files_by_time_range
 
 MUSIC_PRECIPITATION_INTERFACE_ID = "getRadaMosaicProductByTimeRange"
 PRECIPITATION_BIN_CACHE_DIR = RADAR_BIN_CACHE_DIR.parent / "precipitation_bin"
@@ -89,7 +87,6 @@ def _precipitation_base_params(product: PrecipitationProduct):
 
 
 def _query_precipitation_file_list_by_range(
-    client,
     product: PrecipitationProduct,
     base_params,
     start_time: str,
@@ -102,16 +99,15 @@ def _query_precipitation_file_list_by_range(
         end_dt = end_dt.replace(tzinfo=None) - _local_offset()
 
     params = dict(base_params)
-    params["timeRange"] = f"[{_format_music_time(start_dt)},{_format_music_time(end_dt)}]"
-    ret = client.callAPI_to_fileList(
-        MUSIC_USER_ID,
-        MUSIC_PASSWORD,
+    params.pop("dataCode", None)
+    params.pop("dataFormat", None)
+    time_range = f"[{_format_music_time(start_dt)},{_format_music_time(end_dt)}]"
+    return query_music_files_by_time_range(
         MUSIC_PRECIPITATION_INTERFACE_ID,
+        product.data_code,
+        time_range,
         params,
     )
-    if ret.request.errorCode != 0:
-        raise RuntimeError(f"MUSIC {product.label}接口返回失败: {ret.request.errorMessage}")
-    return ret.fileInfos or []
 
 
 def _local_offset():
@@ -119,7 +115,6 @@ def _local_offset():
 
 
 def _query_precipitation_files(product: PrecipitationProduct, time_param=None):
-    client = _get_client()
     day_start, day_end = _calculate_day_bounds(time_param)
     segment_ranges = _iter_segment_ranges(day_start, day_end, product.query_segment_minutes)
 
@@ -130,7 +125,6 @@ def _query_precipitation_files(product: PrecipitationProduct, time_param=None):
     if not time_param:
         for start_time, end_time in reversed(segment_ranges):
             part = _query_precipitation_file_list_by_range(
-                client,
                 product,
                 base_params,
                 start_time,
@@ -148,7 +142,6 @@ def _query_precipitation_files(product: PrecipitationProduct, time_param=None):
         for i in range(req_idx, -1, -1):
             start_time, end_time = segment_ranges[i]
             part = _query_precipitation_file_list_by_range(
-                client,
                 product,
                 base_params,
                 start_time,
@@ -163,7 +156,6 @@ def _query_precipitation_files(product: PrecipitationProduct, time_param=None):
             for i in range(req_idx + 1, len(segment_ranges)):
                 start_time, end_time = segment_ranges[i]
                 part = _query_precipitation_file_list_by_range(
-                    client,
                     product,
                     base_params,
                     start_time,
