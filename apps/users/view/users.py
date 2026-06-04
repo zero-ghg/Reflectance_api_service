@@ -7,23 +7,79 @@ from rest_framework_simplejwt.tokens import RefreshToken
 # TODO: 修改包名
 from Reflectance_api_service.utils.auth import TokenAuthenticate
 
+# RSA 解密需要的包
+from cryptography.hazmat.primitives.asymmetric import padding
+from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.backends import default_backend
+import base64
 
+# ====================== 密钥路径（必须正确） ======================
+import os
+CURRENT_DIR = os.path.dirname(__file__)
+
+PRIVATE_KEY_PATH = os.path.join(CURRENT_DIR, "paper_review_system", "keys", "private_key.pem")
+PUBLIC_KEY_PATH = os.path.join(CURRENT_DIR, "paper_review_system", "keys", "public_key.pem")
+
+# ====================== 加载私钥（全局加载一次） ======================
+def load_private_key():
+    with open(PRIVATE_KEY_PATH, "rb") as f:
+        private_key = serialization.load_pem_private_key(
+            f.read(),
+            password=None,
+            backend=default_backend()
+        )
+    return private_key
+
+
+# 全局加载私钥
+private_key = load_private_key()
+
+# ====================== RSA 解密函数（接收前端传的 base64 密码） ======================
+def rsa_decrypt_password(encrypted_base64):
+    try:
+        # 1. 先把前端传来的 base64 字符串解码
+        encrypted_bytes = base64.b64decode(encrypted_base64)
+
+        # 2. RSA 私钥解密
+        decrypted_bytes = private_key.decrypt(
+            encrypted_bytes,
+            padding.OAEP(
+                mgf=padding.MGF1(algorithm=hashes.SHA256()),
+                algorithm=hashes.SHA256(),
+                label=None
+            )
+        )
+        return decrypted_bytes.decode("utf-8")
+    except Exception as e:
+        # 解密失败（密码格式错误/密钥不匹配）
+        return None
+
+
+# ====================== 登录接口 ======================
 class UserInfoLoginView(APIView):
     def post(self, request):
         username = request.data.get("username")
-        password = request.data.get("password")
+        encrypted_password = request.data.get("password")  # 前端传的是【RSA+Base64加密密码】
 
-        if not username or not password:
+        # 1. 校验非空
+        if not username or not encrypted_password:
             return Response({'code': 1004, 'msg': "用户名或密码不能为空"})
 
+        # 2. 查询用户
         account = UserInfo.objects.filter(username=username, is_delete=False).first()
-
         if account is None:
             return Response({'code': 1004, 'msg': "用户不存在"})
 
+        # ====================== 核心：解密前端传来的密码 ======================
+        password = rsa_decrypt_password(encrypted_password)
+        if password is None:
+            return Response({'code': 1004, 'msg': "密码解密失败，请检查加密方式"})
+
+        # 3. 密码校验
         if account.password != password:
             return Response({'code': 1004, 'msg': "用户名或密码错误"})
 
+        # 4. 生成 JWT 令牌
         refresh = RefreshToken.for_user(account)
 
         return Response({
@@ -32,7 +88,7 @@ class UserInfoLoginView(APIView):
             'data': {
                 'user_id': account.id,
                 'username': account.username,
-                'department':account.department,
+                'department': account.department,
                 'refresh': str(refresh),
                 'access': str(refresh.access_token),
             }

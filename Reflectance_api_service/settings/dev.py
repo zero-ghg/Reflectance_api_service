@@ -185,10 +185,10 @@ CELERY_AUTO_START = 1
 
 # 定时任务配置：每 5 分钟执行一次
 CELERY_BEAT_SCHEDULE = {
-    "sync-weather-warning-every-5-minutes": {
-        "task": "nmc.tasks.sync_weather_warning_task",
-        "schedule": 300.0,
-    },
+    # "sync-weather-warning-every-5-minutes": {
+    #     "task": "nmc.tasks.sync_weather_warning_task",
+    #     "schedule": 300.0,
+    # },
     "lightning-warning-every-6-minutes": {
         # 要执行的任务路径（模块.函数名）
         "task": "lightning_warning.celery_beat.tasks.run_lightning_warning_schedule_task",
