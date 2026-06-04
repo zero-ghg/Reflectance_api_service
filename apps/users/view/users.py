@@ -113,8 +113,6 @@ class CreateUserInfoView(APIView):
         if password is None:
             return Response({'code': 1004, 'msg': "密码解密失败，请检查加密方式"})
 
-        print(password)
-
         # 创建新用户
         try:
             user = UserInfo.objects.create(
@@ -169,8 +167,6 @@ class UpdateUserView(APIView):
         new_password = rsa_decrypt_password(new_password)
         if new_password is None:
             return Response({'code': 1004, 'msg': "密码解密失败，请检查加密方式"})
-
-        print(old_password,new_password)
 
         account = UserInfo.objects.filter(id=user_id, is_delete=False).first()
         if account is None:
