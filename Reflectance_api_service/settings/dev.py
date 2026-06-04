@@ -21,24 +21,35 @@ pymysql.install_as_MySQLdb()
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
+PROJECT_ROOT = BASE_DIR.parent
 # apps 目录添加到 项目搜索包目录列表 即： sys.path 中
 sys.path.insert(0, os.path.join(BASE_DIR, 'apps'))
+sys.path.insert(0, os.path.join(PROJECT_ROOT, 'apps'))
 # MUSIC Python SDK（cma.music）
 
 _SRC = BASE_DIR / "src"
 if _SRC.is_dir():
     sys.path.insert(0, str(_SRC))
 
+
+def _env_bool(name, default=False):
+    return str(os.getenv(name, str(default))).strip().lower() in ("1", "true", "yes", "on")
+
+
+def _env_list(name, default=""):
+    value = os.getenv(name, default)
+    return [item.strip() for item in value.split(",") if item.strip()]
+
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/3.1/howto/deployment/checklist/
 
 # SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = 'p1fb97n@+mllxvqn=am76es0na20hqt%k66i-c&55o21fwtq3p'
+SECRET_KEY = os.getenv('DJANGO_SECRET_KEY', 'p1fb97n@+mllxvqn=am76es0na20hqt%k66i-c&55o21fwtq3p')
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = True
+DEBUG = _env_bool('DJANGO_DEBUG', True)
 
-ALLOWED_HOSTS = ["*"]
+ALLOWED_HOSTS = _env_list('DJANGO_ALLOWED_HOSTS', '*')
 CORS_ORIGIN_WHITELIST = (
     # 备注：允许源地址 `http://127.0.0.1:9999` 向当前 API 服务器发起跨域请求
     'http://127.0.0.1:9999',
@@ -102,12 +113,14 @@ WSGI_APPLICATION = 'Reflectance_api_service.wsgi.application'
 DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.mysql',
-        'NAME': 'leidian_warning',       # 刚才创建的数据库名
-        'USER': 'root',      # PostgreSQL 用户名
-        'PASSWORD': 'root',  # 安装时设置的密码
-        'HOST': 'localhost',
-        'PORT': '3306'         # PostgreSQL 默认端口
-
+        'NAME': os.getenv('MYSQL_DATABASE', 'leidian_warning'),
+        'USER': os.getenv('MYSQL_USER', 'root'),
+        'PASSWORD': os.getenv('MYSQL_PASSWORD', 'Flzxroot!'),
+        'HOST': os.getenv('MYSQL_HOST', '192.168.30.90'),
+        'PORT': os.getenv('MYSQL_PORT', '30036'),
+        'OPTIONS': {
+            'charset': 'utf8mb4',
+        },
     }
 }
 
@@ -172,8 +185,11 @@ SIMPLE_JWT = {
 
 # ... existing code ...
 # Celery 配置
-CELERY_BROKER_URL = "redis://127.0.0.1:6379/0"
-CELERY_RESULT_BACKEND = "redis://127.0.0.1:6379/1"
+REDIS_HOST = os.getenv('REDIS_HOST', '192.168.30.90')
+REDIS_PORT = os.getenv('REDIS_PORT', '30035')
+REDIS_PASSWORD = os.getenv('REDIS_PASSWORD', 'Flzxroot!')
+CELERY_BROKER_URL = os.getenv('CELERY_BROKER_URL', f"redis://{REDIS_HOST}:{REDIS_PORT}/0")
+CELERY_RESULT_BACKEND = os.getenv('CELERY_RESULT_BACKEND', f"redis://{REDIS_HOST}:{REDIS_PORT}/1")
 
 CELERY_TIMEZONE = "Asia/Shanghai"
 CELERY_ENABLE_UTC = False
@@ -181,7 +197,7 @@ CELERY_ENABLE_UTC = False
 CELERY_TASK_TRACK_STARTED = True
 CELERY_TASK_TIME_LIMIT = 60 * 5
 
-CELERY_AUTO_START = 1
+CELERY_AUTO_START = int(_env_bool('CELERY_AUTO_START', True))
 
 # 定时任务配置：每 5 分钟执行一次
 CELERY_BEAT_SCHEDULE = {
@@ -210,6 +226,7 @@ CELERY_BEAT_SCHEDULE = {
 }
 
 STATIC_URL = '/static/'
+STATIC_ROOT = os.getenv('DJANGO_STATIC_ROOT', os.path.join(BASE_DIR, '../staticfiles'))
 
 MEDIA_URL = '/media/'
-MEDIA_ROOT = os.path.join(BASE_DIR, 'apps', '../apps/img', )
+MEDIA_ROOT = os.getenv('DJANGO_MEDIA_ROOT', os.path.join(BASE_DIR, 'apps', '../apps/img', ))
