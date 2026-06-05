@@ -8,6 +8,9 @@ from Reflectance_api_service.settings.status_code import StatusCode
 def custom_exception_handler(exc, context):
     response = exception_handler(exc, context)
 
+    if response is None:
+        return None
+
     if response.data is not None:
         # 初始的错误信息
         custom_response_data = {
@@ -60,11 +63,19 @@ def custom_exception_handler(exc, context):
             #     custom_response_data['message'] = "".join(error_messages)
 
             # 处理认证错误
+            elif response.status_code == 403:
+                error_messages = []
+                for field, messages in response.data.items():
+                    error_messages.append(f"{''.join([str(msg) for msg in messages])}")
+                custom_response_data['code'] = 403
+                custom_response_data['message'] = "".join(error_messages) or "没有权限"
+
             elif response.status_code == 401:
                 error_messages = []
                 for field, messages in response.data.items():
                     error_messages.append(f"{''.join([str(msg) for msg in messages])}")
                 custom_response_data['code'] = StatusCode.NOT_AUTHENTICATED_CODE
                 custom_response_data['message'] = "".join(error_messages)
-        return Response(custom_response_data, status=status.HTTP_200_OK)
+        http_status = response.status_code if response.status_code in (401, 403) else status.HTTP_200_OK
+        return Response(custom_response_data, status=http_status)
     return response
