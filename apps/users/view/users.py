@@ -77,7 +77,7 @@ class UserInfoLoginView(APIView):
 
         # 3. 密码校验
         if account.password != password:
-            return Response({'code': 1004, 'msg': "用户名或密码错误"})
+            return Response({'code': 1004, 'msg': "密码错误"})
 
         # 4. 生成 JWT 令牌
         refresh = RefreshToken.for_user(account)
@@ -107,6 +107,11 @@ class CreateUserInfoView(APIView):
         # 检查用户名是否已存在
         if UserInfo.objects.filter(username=username).exists():
             return Response({'code': 1004, 'msg': "用户名已存在"})
+
+        # ====================== 核心：解密前端传来的密码 ======================
+        password = rsa_decrypt_password(password)
+        if password is None:
+            return Response({'code': 1004, 'msg': "密码解密失败，请检查加密方式"})
 
         # 创建新用户
         try:
@@ -152,6 +157,16 @@ class UpdateUserView(APIView):
 
         if not old_password or not new_password:
             return Response({'code': 1004, 'msg': "旧密码和新密码不能为空"})
+
+        # ====================== 核心：解密前端传来的密码 ======================
+        old_password = rsa_decrypt_password(old_password)
+        if old_password is None:
+            return Response({'code': 1004, 'msg': "密码解密失败，请检查加密方式"})
+
+        # ====================== 核心：解密前端传来的密码 ======================
+        new_password = rsa_decrypt_password(new_password)
+        if new_password is None:
+            return Response({'code': 1004, 'msg': "密码解密失败，请检查加密方式"})
 
         account = UserInfo.objects.filter(id=user_id, is_delete=False).first()
         if account is None:
