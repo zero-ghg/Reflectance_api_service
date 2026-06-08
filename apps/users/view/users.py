@@ -4,8 +4,10 @@ from rest_framework.response import Response
 from apps.users.serializers.users import UserInfoLoginSerializer, UserInfoSerializer
 from apps.users.models import UserInfo
 from rest_framework_simplejwt.tokens import RefreshToken
+from rest_framework_simplejwt.exceptions import ExpiredTokenError, TokenError
 # TODO: 修改包名
 from Reflectance_api_service.utils.auth import TokenAuthenticate
+from Reflectance_api_service.settings.status_code import StatusCode
 
 # RSA 解密需要的包
 from cryptography.hazmat.primitives.asymmetric import padding
@@ -104,6 +106,48 @@ class UserInfoLoginView(APIView):
                 'access': str(refresh.access_token),
             }
         })
+
+class UserTokenRefreshView(APIView):
+    def post(self, request):
+        refresh_token = request.data.get("refresh")
+        if not refresh_token:
+            return Response({"code": 400, "msg": "缺少参数 refresh"}, status=400)
+
+        try:
+            refresh = RefreshToken(refresh_token)
+            user_id = refresh.get("user_id")
+            user = UserInfo.objects.filter(id=user_id, is_delete=False).first()
+            if user is None:
+                return Response(
+                    {"code": StatusCode.NOT_AUTHENTICATED_CODE, "msg": "用户不存在", "data": {}},
+                    status=401,
+                )
+
+            return Response(
+                {
+                    "code": 200,
+                    "msg": "刷新成功",
+                    "data": {
+                        "access": str(refresh.access_token),
+                    },
+                }
+            )
+        except ExpiredTokenError:
+            return Response(
+                {"code": StatusCode.TOKEN_EXPIRED_CODE, "msg": "token已过期", "data": {}},
+                status=401,
+            )
+        except TokenError as exc:
+            if "expired" in str(exc).lower():
+                return Response(
+                    {"code": StatusCode.TOKEN_EXPIRED_CODE, "msg": "token已过期", "data": {}},
+                    status=401,
+                )
+            return Response(
+                {"code": StatusCode.NOT_AUTHENTICATED_CODE, "msg": "refresh token无效", "data": {}},
+                status=401,
+            )
+
 
 class CreateUserInfoView(APIView):
     authentication_classes = [TokenAuthenticate]

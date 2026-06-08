@@ -74,8 +74,11 @@ def custom_exception_handler(exc, context):
                 error_messages = []
                 for field, messages in response.data.items():
                     error_messages.append(f"{''.join([str(msg) for msg in messages])}")
-                custom_response_data['code'] = StatusCode.NOT_AUTHENTICATED_CODE
                 custom_response_data['message'] = "".join(error_messages)
+                if custom_response_data['message'] == "token已过期":
+                    custom_response_data['code'] = StatusCode.TOKEN_EXPIRED_CODE
+                else:
+                    custom_response_data['code'] = StatusCode.NOT_AUTHENTICATED_CODE
         http_status = response.status_code if response.status_code in (401, 403) else status.HTTP_200_OK
         return Response(custom_response_data, status=http_status)
     return response
