@@ -2,6 +2,7 @@ from rest_framework.authentication import BaseAuthentication
 from rest_framework.exceptions import AuthenticationFailed, NotAuthenticated, APIException
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 from rest_framework_simplejwt.authentication import JWTAuthentication
+from rest_framework_simplejwt.exceptions import ExpiredTokenError
 from rest_framework_simplejwt.tokens import AccessToken
 from rest_framework import status
 from apps.users.models import UserInfo
@@ -14,16 +15,18 @@ class TokenAuthenticate(BaseAuthentication):
             prefix = 'Bearer '
             if auth_header.startswith(prefix):
                 token = auth_header[len(prefix):]
-                print(token)
+                # print(token)
             else:
                 raise AuthenticationFailed("无效的认证前缀")
 
             try:
                 validated_token = AccessToken(token)
+            except ExpiredTokenError:
+                raise AuthenticationFailed("token已过期")
             except Exception as e:
                 raise AuthenticationFailed("鉴权失败")
 
-            user = UserInfo.objects.filter(pk=validated_token['user_id']).first()
+            user = UserInfo.objects.filter(pk=validated_token['user_id'], is_delete=False).first()
             if user is None:
                 raise AuthenticationFailed("用户不存在")
 

@@ -37,6 +37,7 @@ class StatusCode:
     CHAT_TOKEN_ERROR_CODE = 1023
     TOKEN_DECODE_ERROR_CODE = 1024
     NOT_STUDENT_CODE = 1025
+    TOKEN_EXPIRED_CODE = 1026
 
     CREATE_CODE = 200  # 创建成功/增加成功
     PUT_CODE = 200  # 修改成功

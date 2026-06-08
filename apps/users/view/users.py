@@ -4,8 +4,10 @@ from rest_framework.response import Response
 from apps.users.serializers.users import UserInfoLoginSerializer, UserInfoSerializer
 from apps.users.models import UserInfo
 from rest_framework_simplejwt.tokens import RefreshToken
+from rest_framework_simplejwt.exceptions import ExpiredTokenError, TokenError
 # TODO: 修改包名
 from Reflectance_api_service.utils.auth import TokenAuthenticate
+from Reflectance_api_service.settings.status_code import StatusCode
 
 # RSA 解密需要的包
 from cryptography.hazmat.primitives.asymmetric import padding
@@ -33,6 +35,17 @@ def load_private_key():
 
 # 全局加载私钥
 private_key = load_private_key()
+
+ADMIN_DEPARTMENTS = {"管理员", "admin", "administrator"}
+
+
+def is_admin_user(user):
+    department = str(getattr(user, "department", "") or "").strip().lower()
+    return department in ADMIN_DEPARTMENTS
+
+
+def permission_denied_response():
+    return Response({"code": 403, "msg": "没有权限"}, status=403)
 
 # ====================== RSA 解密函数（接收前端传的 base64 密码） ======================
 def rsa_decrypt_password(encrypted_base64):
@@ -63,12 +76,12 @@ class UserInfoLoginView(APIView):
 
         # 1. 校验非空
         if not username or not encrypted_password:
-            return Response({'code': 1004, 'msg': "用户名或密码不能为空"})
+            return Response({'code': 400, 'msg': "用户名或密码不能为空"})
 
         # 2. 查询用户
         account = UserInfo.objects.filter(username=username, is_delete=False).first()
         if account is None:
-            return Response({'code': 1004, 'msg': "用户不存在"})
+            return Response({'code': 400, 'msg': "用户不存在"})
 
         # ====================== 核心：解密前端传来的密码 ======================
         password = rsa_decrypt_password(encrypted_password)
@@ -77,7 +90,7 @@ class UserInfoLoginView(APIView):
 
         # 3. 密码校验
         if account.password != password:
-            return Response({'code': 1004, 'msg': "密码错误"})
+            return Response({'code': 400, 'msg': "密码错误"})
 
         # 4. 生成 JWT 令牌
         refresh = RefreshToken.for_user(account)
@@ -94,24 +107,71 @@ class UserInfoLoginView(APIView):
             }
         })
 
-class CreateUserInfoView(APIView):
+class UserTokenRefreshView(APIView):
     def post(self, request):
+        refresh_token = request.data.get("refresh")
+        if not refresh_token:
+            return Response({"code": 400, "msg": "缺少参数 refresh"}, status=400)
+
+        try:
+            refresh = RefreshToken(refresh_token)
+            user_id = refresh.get("user_id")
+            user = UserInfo.objects.filter(id=user_id, is_delete=False).first()
+            if user is None:
+                return Response(
+                    {"code": StatusCode.NOT_AUTHENTICATED_CODE, "msg": "用户不存在", "data": {}},
+                    status=401,
+                )
+
+            return Response(
+                {
+                    "code": 200,
+                    "msg": "刷新成功",
+                    "data": {
+                        "access": str(refresh.access_token),
+                    },
+                }
+            )
+        except ExpiredTokenError:
+            return Response(
+                {"code": StatusCode.TOKEN_EXPIRED_CODE, "msg": "token已过期", "data": {}},
+                status=401,
+            )
+        except TokenError as exc:
+            if "expired" in str(exc).lower():
+                return Response(
+                    {"code": StatusCode.TOKEN_EXPIRED_CODE, "msg": "token已过期", "data": {}},
+                    status=401,
+                )
+            return Response(
+                {"code": StatusCode.NOT_AUTHENTICATED_CODE, "msg": "refresh token无效", "data": {}},
+                status=401,
+            )
+
+
+class CreateUserInfoView(APIView):
+    authentication_classes = [TokenAuthenticate]
+
+    def post(self, request):
+        if not is_admin_user(request.user):
+            return permission_denied_response()
+
         username = request.data.get("username")
         password = request.data.get("password")
         department = request.data.get("department")
 
         # 验证必填字段
         if not username or not password or not department:
-            return Response({'code': 1004, 'msg': "用户名、密码和部门不能为空"})
+            return Response({'code': 400, 'msg': "用户名、密码和部门不能为空"})
 
         # 检查用户名是否已存在
         if UserInfo.objects.filter(username=username).exists():
-            return Response({'code': 1004, 'msg': "用户名已存在"})
+            return Response({'code': 400, 'msg': "用户名已存在"})
 
         # ====================== 核心：解密前端传来的密码 ======================
         password = rsa_decrypt_password(password)
         if password is None:
-            return Response({'code': 1004, 'msg': "密码解密失败，请检查加密方式"})
+            return Response({'code': 400, 'msg': "密码解密失败，请检查加密方式"})
 
         # 创建新用户
         try:
@@ -125,19 +185,24 @@ class CreateUserInfoView(APIView):
                 'msg': "用户创建成功"
             })
         except Exception as e:
-            return Response({'code': 1005, 'msg': f"用户创建失败: {str(e)}"})
+            return Response({'code': 400, 'msg': f"用户创建失败: {str(e)}"})
 
 
 
 class DeleteUserView(APIView):
+    authentication_classes = [TokenAuthenticate]
+
     def get(self, request):
+        if not is_admin_user(request.user):
+            return permission_denied_response()
+
         user_id = request.query_params.get("id")
 
         if not user_id:
-            return Response({'code': 1004, 'msg': "用户ID不能为空"})
+            return Response({'code': 400, 'msg': "用户ID不能为空"})
         account = UserInfo.objects.filter(id=user_id, is_delete=False).first()
         if account is None:
-            return Response({'code': 1004, 'msg': "用户不存在"})
+            return Response({'code': 400, 'msg': "用户不存在"})
         account.is_delete = True
         account.save()
         return Response({
@@ -147,13 +212,23 @@ class DeleteUserView(APIView):
 
 
 class UpdateUserView(APIView):
+    authentication_classes = [TokenAuthenticate]
+
     def put(self, request):
         user_id = request.data.get("id")
         old_password = request.data.get("old_password")
         new_password = request.data.get("new_password")
 
         if not user_id:
-            return Response({'code': 1004, 'msg': "用户ID不能为空"})
+            return Response({'code': 400, 'msg': "用户ID不能为空"})
+
+        try:
+            user_id = int(user_id)
+        except (TypeError, ValueError):
+            return Response({'code': 400, 'msg': "用户ID格式错误"})
+
+        if user_id != request.user.id:
+            return permission_denied_response()
 
         if not old_password or not new_password:
             return Response({'code': 1004, 'msg': "旧密码和新密码不能为空"})
@@ -161,20 +236,23 @@ class UpdateUserView(APIView):
         # ====================== 核心：解密前端传来的密码 ======================
         old_password = rsa_decrypt_password(old_password)
         if old_password is None:
-            return Response({'code': 1004, 'msg': "密码解密失败，请检查加密方式"})
+            return Response({'code': 400, 'msg': "密码解密失败，请检查加密方式"})
 
         # ====================== 核心：解密前端传来的密码 ======================
         new_password = rsa_decrypt_password(new_password)
         if new_password is None:
-            return Response({'code': 1004, 'msg': "密码解密失败，请检查加密方式"})
+            return Response({'code': 400, 'msg': "密码解密失败，请检查加密方式"})
 
         account = UserInfo.objects.filter(id=user_id, is_delete=False).first()
         if account is None:
-            return Response({'code': 1004, 'msg': "用户不存在"})
+            return Response({'code': 400, 'msg': "用户不存在"})
 
         # 验证旧密码是否正确
         if account.password != old_password:
-            return Response({'code': 1004, 'msg': "旧密码错误"})
+            return Response({'code': 400, 'msg': "旧密码错误"})
+
+        if account.password == new_password:
+            return Response({'code': 400, 'msg': "新密码不能与旧密码相同"})
 
         # 更新密码
         account.password = new_password
@@ -188,8 +266,12 @@ class UpdateUserView(APIView):
 
 
 class UserListView(APIView):
-    permission_classes = []
+    authentication_classes = [TokenAuthenticate]
+
     def get(self, request):
+        if not is_admin_user(request.user):
+            return permission_denied_response()
+
         queryset = UserInfo.objects.filter(is_delete=False)
         serializer = UserInfoSerializer(queryset, many=True)
         return Response({
