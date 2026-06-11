@@ -1,4 +1,5 @@
 import logging
+import os
 from datetime import timedelta
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -8,7 +9,8 @@ from lightning_warning.models import LightningWarningResult
 
 logger = logging.getLogger(__name__)
 
-LOOKBACK_MINUTES = 10  # 数据回溯时间窗口（分钟），即计算最近10分钟的数据
+LOOKBACK_MINUTES = int(os.getenv("LIGHTNING_WARNING_LOOKBACK_MINUTES", "30"))
+CACHE_LOOKAROUND_MINUTES = int(os.getenv("LIGHTNING_WARNING_CACHE_LOOKAROUND_MINUTES", "60"))
 MYSQL_DB = "default"  # MySQL 数据库别名（对应 settings.DATABASES 中的 'mysql'）
 
 
@@ -81,22 +83,23 @@ def query_by_time(calculator, query_dt) -> Tuple[List[Dict[str, Any]], str]:
 
 def query_nearest_by_time(calculator, query_dt) -> Tuple[List[Dict[str, Any]], str, Optional[Any]]:
     """
-    查询不晚于 query_dt 的最近一批预警结果。
+    查询 query_dt 前后指定时间范围内最近的一批预警结果。
 
     返回:
         (预警数据列表, 响应时间字符串, 命中的 response_time)
     """
-    row = (
+    start_dt = query_dt - timedelta(minutes=CACHE_LOOKAROUND_MINUTES)
+    end_dt = query_dt + timedelta(minutes=CACHE_LOOKAROUND_MINUTES)
+    rows = list(
         LightningWarningResult.objects.using(MYSQL_DB)
-        .filter(response_time__lte=query_dt)
-        .order_by("-response_time")
+        .filter(response_time__gte=start_dt, response_time__lte=end_dt)
         .values("response_time")
-        .first()
+        .distinct()
     )
-    if not row:
+    if not rows:
         return [], "", None
 
-    nearest_dt = row["response_time"]
+    nearest_dt = min(rows, key=lambda row: abs(row["response_time"] - query_dt))["response_time"]
     qs = (
         LightningWarningResult.objects.using(MYSQL_DB)
         .filter(response_time=nearest_dt)
@@ -107,7 +110,7 @@ def query_nearest_by_time(calculator, query_dt) -> Tuple[List[Dict[str, Any]], s
 
 def compute_and_save(calculator, query_dt) -> Tuple[List[Dict[str, Any]], str]:
     """
-    以前端 time 为结束时刻，回溯 10 分钟计算并写入 MySQL。
+    以前端 time 为结束时刻，按配置的分钟数回溯计算并写入 MySQL。
 
     参数:
         calculator: Detail_Warning 实例，提供计算方法
@@ -117,7 +120,7 @@ def compute_and_save(calculator, query_dt) -> Tuple[List[Dict[str, Any]], str]:
         (预警数据列表, 响应时间字符串)
     """
     end_dt = query_dt  # 已经是 naive datetime
-    start_dt = end_dt - timedelta(minutes=LOOKBACK_MINUTES)  # 计算开始时间（回溯10分钟）
+    start_dt = end_dt - timedelta(minutes=LOOKBACK_MINUTES)
 
     # 调用 Detail_Warning 的方法构建预警列表
     warning_list = calculator._build_warning_list(
@@ -142,7 +145,7 @@ def compute_and_save(calculator, query_dt) -> Tuple[List[Dict[str, Any]], str]:
 def run_scheduled_job(calculator) -> None:
     """
     执行定时任务：取当前时刻，在 PG 中找最近监测时次作为 end_time，
-    再向前回溯 10 分钟计算并写入 MySQL。
+    再向前回溯配置的分钟数计算并写入 MySQL。
     """
     now_dt = timezone.now().replace(tzinfo=None)
 
