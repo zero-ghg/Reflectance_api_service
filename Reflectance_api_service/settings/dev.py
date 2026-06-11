@@ -165,7 +165,7 @@ REST_FRAMEWORK = {
     'EXCEPTION_HANDLER': 'Reflectance_api_service.utils.custom_exception.custom_exception_handler',
 }
 SIMPLE_JWT = {
-    'ACCESS_TOKEN_LIFETIME': timedelta(minutes=30),  # Access Token的有效期
+    'ACCESS_TOKEN_LIFETIME': timedelta(hours=2),  # Access Token的有效期
     'REFRESH_TOKEN_LIFETIME': timedelta(days=7),  # Refresh Token的有效期
 
 }
@@ -189,12 +189,12 @@ CELERY_BEAT_SCHEDULE = {
     #     "task": "nmc.tasks.sync_weather_warning_task",
     #     "schedule": 300.0,
     # },
-    "lightning-warning-every-6-minutes": {
-        # 要执行的任务路径（模块.函数名）
-        "task": "lightning_warning.celery_beat.tasks.run_lightning_warning_schedule_task",
-        # 调度规则：每6分钟执行一次（在第0、6、12、18、24、30、36、42、48、54分钟触发）
-        "schedule": crontab(minute="1-59/6"),
-    },
+    # "lightning-warning-every-6-minutes": {
+    #     # 要执行的任务路径（模块.函数名）
+    #     "task": "lightning_warning.celery_beat.tasks.run_lightning_warning_schedule_task",
+    #     # 调度规则：每6分钟执行一次（在第0、6、12、18、24、30、36、42、48、54分钟触发）
+    #     "schedule": crontab(minute="1-59/6"),
+    # },
     "reflectance-every-6-minutes": {
         "task": "reflectance.celery_beat.tasks.run_reflectance_schedule_task",
         "schedule": crontab(minute="1-59/6"),
