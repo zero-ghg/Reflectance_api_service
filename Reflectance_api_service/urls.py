@@ -1,11 +1,15 @@
 from django.urls import path, include
 from django.conf import settings
 from django.conf.urls.static import static
+from rest_framework_simplejwt.views import token_refresh, token_verify
 
 urlpatterns = [
     path('api/v1/', include('users.urls')),
+    path('api/v1/renmc/', include('apps.nmc.urls')),
     path('api/v1/radar/', include('reflectance.urls')),
     path('api/v1/warning/', include('lightning_warning.urls')),
+    path('api/v1/refresh/', token_refresh),
+    path('api/v1/verify/', token_verify),
 ]
 
 if settings.DEBUG:

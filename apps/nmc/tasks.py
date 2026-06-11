@@ -5,7 +5,9 @@ from typing import Any, Dict, List, Optional
 from celery import shared_task
 from django.db import transaction
 
+from apps.nmc.cma_image_products import sync_cma_image_products
 from apps.nmc.models import WeatherWarning
+from apps.nmc.satellite_cloud import sync_satellite_cloud_images
 
 # 这里改成你实际写接口调用方法的位置
 # 例如：from nmc.services.music import query_warning_records
@@ -297,3 +299,33 @@ def sync_weather_warning_task():
         "skipped": skipped_count,
         "error": error_count,
     }
+
+
+@shared_task(name="nmc.tasks.sync_satellite_cloud_task")
+def sync_satellite_cloud_task():
+    """Celery Beat 定时调用入口：抓取 CMA FY4B 卫星云图并落盘。"""
+    logger.info("开始同步 FY4B 卫星云图")
+    result = sync_satellite_cloud_images()
+    logger.info(
+        "FY4B 卫星云图同步完成 total=%s created=%s skipped=%s failed=%s",
+        result.get("total"),
+        result.get("created"),
+        result.get("skipped"),
+        result.get("failed"),
+    )
+    return result
+
+
+@shared_task(name="nmc.tasks.sync_cma_image_products_task")
+def sync_cma_image_products_task():
+    """Celery Beat 定时调用入口：抓取 CMA 降水量、气温等图片产品并落盘。"""
+    logger.info("开始同步 CMA 图片产品")
+    result = sync_cma_image_products()
+    logger.info(
+        "CMA 图片产品同步完成 total=%s created=%s skipped=%s failed=%s",
+        result.get("total"),
+        result.get("created"),
+        result.get("skipped"),
+        result.get("failed"),
+    )
+    return result

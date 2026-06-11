@@ -116,8 +116,8 @@ DATABASES = {
         'NAME': os.getenv('MYSQL_DATABASE', 'leidian_warning'),
         'USER': os.getenv('MYSQL_USER', 'root'),
         'PASSWORD': os.getenv('MYSQL_PASSWORD', 'Flzxroot!'),
-        'HOST': os.getenv('MYSQL_HOST', '192.168.30.90'),
-        'PORT': os.getenv('MYSQL_PORT', '30036'),
+        'HOST': os.getenv('MYSQL_HOST', '17.18.0.5'),
+        'PORT': os.getenv('MYSQL_PORT', '3306'),
         'OPTIONS': {
             'charset': 'utf8mb4',
         },
@@ -187,9 +187,9 @@ SIMPLE_JWT = {
 # Celery 配置
 REDIS_HOST = os.getenv('REDIS_HOST', '192.168.30.90')
 REDIS_PORT = os.getenv('REDIS_PORT', '30035')
-REDIS_PASSWORD = os.getenv('REDIS_PASSWORD', 'Flzxroot!')
-CELERY_BROKER_URL = os.getenv('CELERY_BROKER_URL', f"redis://{REDIS_HOST}:{REDIS_PORT}/0")
-CELERY_RESULT_BACKEND = os.getenv('CELERY_RESULT_BACKEND', f"redis://{REDIS_HOST}:{REDIS_PORT}/1")
+REDIS_PASSWORD = os.getenv('REDIS_PASSWORD', 'Flzxroot')
+CELERY_BROKER_URL = os.getenv('CELERY_BROKER_URL', f"redis://:{REDIS_PASSWORD}@{REDIS_HOST}:{REDIS_PORT}/0")
+CELERY_RESULT_BACKEND = os.getenv('CELERY_RESULT_BACKEND', f"redis://:{REDIS_PASSWORD}@{REDIS_HOST}:{REDIS_PORT}/1")
 
 CELERY_TIMEZONE = "Asia/Shanghai"
 CELERY_ENABLE_UTC = False
@@ -214,6 +214,14 @@ CELERY_BEAT_SCHEDULE = {
     "reflectance-every-6-minutes": {
         "task": "reflectance.celery_beat.tasks.run_reflectance_schedule_task",
         "schedule": crontab(minute="1-59/6"),
+    },
+    "satellite-cloud-every-10-minutes": {
+        "task": "nmc.tasks.sync_satellite_cloud_task",
+        "schedule": crontab(minute="*/10"),
+    },
+    "cma-image-products-every-10-minutes": {
+        "task": "nmc.tasks.sync_cma_image_products_task",
+        "schedule": crontab(minute="*/10"),
     },
     # "precipitation-1h-every-6-minutes": {
     #     "task": "reflectance.celery_beat.tasks.run_precipitation_1h_schedule_task",

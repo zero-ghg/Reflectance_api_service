@@ -1,6 +1,6 @@
 from rest_framework import serializers
 
-from nmc.models import WeatherWarning
+from apps.nmc.models import WeatherWarning
 
 
 class WeatherWarningSerializer(serializers.ModelSerializer):
