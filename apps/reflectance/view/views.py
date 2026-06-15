@@ -16,6 +16,7 @@ from reflectance.celery_beat.schedule_component import (
     get_reflectance_exact_from_local,
     render_reflectance_image,
 )
+from reflectance.celery_beat.thunderstorm_nowcast import build_thunderstorm_nowcast
 from reflectance.music.music_radar import radar_bin_path
 from reflectance.music.precipitation import get_precipitation_product
 
@@ -48,6 +49,7 @@ class ReflectanceView(APIView):
                     "data": {
                         "url": result["image_url"],
                         "time": result["response_time"],
+                        "corners": result.get("corners"),
                     },
                 }
             )
@@ -78,6 +80,7 @@ class PrecipitationView(APIView):
                     "data": {
                         "url": result["image_url"],
                         "time": result["response_time"],
+                        "corners": result.get("corners"),
                     },
                 }
             )
@@ -95,3 +98,23 @@ class PrecipitationOneHourView(PrecipitationView):
 
 class PrecipitationThreeHourView(PrecipitationView):
     product_key = "3h"
+
+
+class ThunderstormNowcastView(APIView):
+    def get(self, request):
+        time_str = request.query_params.get("time")
+        lead_minutes = request.query_params.get("lead_minutes")
+        try:
+            history_count = int(request.query_params.get("history", 4))
+        except (TypeError, ValueError):
+            history_count = 4
+
+        try:
+            result = build_thunderstorm_nowcast(time_str, history_count, lead_minutes)
+            return Response({"code": 200, "msg": "获取成功", "data": result})
+        except NotFound as exc:
+            detail = exc.detail if isinstance(exc.detail, str) else str(exc.detail)
+            return Response({"code": 404, "msg": detail}, status=404)
+        except Exception:
+            logger.exception("雷雨临近预警研判失败")
+            raise RadarDataError(detail="雷雨临近预警研判失败，请稍后重试")

@@ -80,6 +80,16 @@ def _response_time_from_meta(meta_path: Path, fallback_dt: datetime) -> str:
     return fallback_dt.strftime("%Y-%m-%d %H:%M:%S")
 
 
+def _corners_from_meta(meta_path: Path):
+    if meta_path.exists():
+        try:
+            meta = json.loads(meta_path.read_text(encoding="utf-8"))
+            return meta.get("corners")
+        except (OSError, json.JSONDecodeError):
+            pass
+    return None
+
+
 def _local_image_result(image_path: Path, response_dt: datetime) -> Dict[str, Any]:
     image_filename = image_path.name
     meta_path = image_path.with_suffix(".json")
@@ -88,6 +98,7 @@ def _local_image_result(image_path: Path, response_dt: datetime) -> Dict[str, An
         "image_path": str(image_path),
         "image_url": _build_image_url(image_filename),
         "response_time": _response_time_from_meta(meta_path, response_dt),
+        "corners": _corners_from_meta(meta_path),
         "from_cache": True,
     }
 
@@ -220,16 +231,18 @@ def render_reflectance_image(time_param: Optional[str] = None) -> Dict[str, Any]
                 "image_path": str(image_path),
                 "image_url": _build_image_url(image_filename),
                 "response_time": response_time,
+                "corners": None,
                 "from_cache": from_cache,
             }
 
+        corners = None
         if image_path.exists():
             from_cache = True
-            corners = None
             if meta_path.exists():
                 try:
                     meta = json.loads(meta_path.read_text(encoding="utf-8"))
                     response_time = meta.get("time", response_time) or response_time
+                    corners = meta.get("corners")
                 except (OSError, json.JSONDecodeError):
                     pass
             if not meta_path.exists():
@@ -320,6 +333,7 @@ def render_reflectance_image(time_param: Optional[str] = None) -> Dict[str, Any]
         "image_path": str(image_path),
         "image_url": _build_image_url(image_filename),
         "response_time": response_time,
+        "corners": corners,
         "from_cache": from_cache,
     }
 
