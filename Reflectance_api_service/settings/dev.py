@@ -116,7 +116,7 @@ DATABASES = {
         'NAME': os.getenv('MYSQL_DATABASE', 'leidian_warning'),
         'USER': os.getenv('MYSQL_USER', 'root'),
         'PASSWORD': os.getenv('MYSQL_PASSWORD', 'Flzxroot!'),
-        'HOST': os.getenv('MYSQL_HOST', '17.18.0.5'),
+        'HOST': os.getenv('MYSQL_HOST', '172.18.0.5'),
         'PORT': os.getenv('MYSQL_PORT', '3306'),
         'OPTIONS': {
             'charset': 'utf8mb4',

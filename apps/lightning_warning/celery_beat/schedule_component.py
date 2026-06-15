@@ -52,6 +52,7 @@ def _rows_to_api(qs) -> List[Dict[str, Any]]:
             "max_val": int(row.max_val),  # 最大值
             "min_val": int(row.min_val),  # 最小值
             "avg_val": int(row.avg_val),  # 平均值
+            "value_unit": "V/m",
         }
         for row in qs  # 遍历查询结果集
     ]

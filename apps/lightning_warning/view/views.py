@@ -469,13 +469,13 @@ class Detail_Warning(APIView):
         }
 
     @staticmethod
-    def _stat_int_scaled(value, unit: str) -> int:
+    def _stat_value_to_v_per_meter(value, unit: str) -> int:
         if value is None:  # 如果值为None
             return 0  # 返回0
         v = float(value)  # 转换为浮点数
-        if unit == "V/m":  # 如果单位是V/m
-            v = v / 1000.0  # 转换为kV/m
-        return int(round(v))  # 四舍五入后转为整数返回
+        if unit == "kV/m":
+            v = v * 1000.0
+        return int(round(v))
 
     def _fetch_pg_data(self, start_dt, end_dt):
         """
@@ -639,9 +639,9 @@ class Detail_Warning(APIView):
                     "lng": cfg.get("lng"),
                     "lat": cfg.get("lat"),
                     "type": wtype,  # 预警类型
-                    "max_val": self._stat_int_scaled(row["max_val"], unit),  # 缩放后的最大值
-                    "min_val": self._stat_int_scaled(row["min_val"], unit),  # 缩放后的最小值
-                    "avg_val": self._stat_int_scaled(row["avg_val"], unit),  # 缩放后的平均值
+                    "max_val": self._stat_value_to_v_per_meter(row["max_val"], unit),  # 单位：V/m
+                    "min_val": self._stat_value_to_v_per_meter(row["min_val"], unit),  # 单位：V/m
+                    "avg_val": self._stat_value_to_v_per_meter(row["avg_val"], unit),  # 单位：V/m
                 }
             )
         return warning_list  # 返回预警列表

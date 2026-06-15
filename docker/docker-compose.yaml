@@ -7,6 +7,8 @@ services:
       dockerfile: docker/Dockerfile
     ports:
       - "30033:8080"
+    volumes:
+      - "./img:/app/Reflectance_api_service/apps/img"
     container_name: reflectance_api_service
     image: reflectance_api_service:v1.0
     restart: always
